@@ -1,0 +1,24 @@
+name: rpy2-arimax
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Python
+  - python=3.11
+  - pandas
+  - numpy
+  
+  # R and rpy2
+  - r-base=4.5.2
+  - rpy2>=3.5
+  - r-forecast
+  - r-renv
+  
+  # Jupyter support for Cursor
+  - jupyter
+  - ipykernel
+  - notebook
+  
+  # Snowflake (for testing model registry locally)
+  - snowflake-snowpark-python
+  - snowflake-ml-python
