@@ -158,3 +158,5 @@ coverage.xml
 *.cover
 *.coverage
 .hypothesis/
+
+internal/

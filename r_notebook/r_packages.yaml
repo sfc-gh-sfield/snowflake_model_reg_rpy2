@@ -1,0 +1,34 @@
+# R Package Configuration for Snowflake Workspace Notebooks
+# =========================================================
+#
+# This file defines the R packages to install into the micromamba r_env.
+# Edit this file to customize your R environment.
+#
+# Package Types:
+# --------------
+# conda_packages: Installed via micromamba from conda-forge
+#                 Use conda package names (e.g., r-tidyverse, r-dplyr)
+#                 Preferred for packages with complex dependencies
+#
+# cran_packages:  Installed via install.packages() from CRAN
+#                 Use standard R package names (e.g., prophet, fable)
+#                 Requires outbound HTTP access to CRAN
+#
+# Note: Packages listed here are installed during the base R setup.
+#       ADBC packages are installed separately when using --adbc flag.
+
+# Conda-forge packages (package names as they appear in conda-forge)
+conda_packages:
+  - r-base           # Required: Base R installation
+  - r-tidyverse      # Data manipulation and visualization (dplyr, ggplot2, tidyr, etc.)
+  - r-lazyeval       # Required for some tidyverse operations
+  - reticulate       # R interface to Python (useful for advanced interop)
+
+# CRAN packages (standard R package names)
+# These are installed after conda packages via install.packages()
+# Uncomment packages as needed
+cran_packages: []
+  # - prophet        # Time series forecasting
+  # - fable          # Tidy time series forecasting
+  # - shiny          # Web applications
+  # - caret          # Machine learning
