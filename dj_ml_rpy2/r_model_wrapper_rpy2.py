@@ -5,18 +5,34 @@ This implementation uses rpy2 for direct Python-R interoperability,
 avoiding the overhead of CSV file I/O and subprocess execution.
 
 Updated for rpy2 3.6.x API (removed deprecated pandas2ri.activate()).
+
+IMPORTANT: All rpy2 imports are done inside methods to avoid pickle issues.
+Module-level rpy2 imports create objects with weak references that cannot be serialized.
 """
 
 import pandas as pd
 import numpy as np
+import uuid
 from snowflake.ml.model import custom_model
 
-# rpy2 imports - R initializes on first import
-import rpy2.robjects as ro
-from rpy2.robjects import pandas2ri, r
-from rpy2.robjects.vectors import FloatVector
-from rpy2.robjects.conversion import localconverter
-from rpy2.rinterface_lib.embedded import RRuntimeError
+
+def _get_rpy2_components():
+    """
+    Lazy import of rpy2 components to avoid pickle issues.
+    
+    Returns tuple of (ro, r, FloatVector, localconverter, RRuntimeError, combined_converter)
+    """
+    import rpy2.robjects as ro
+    from rpy2.robjects import pandas2ri, r
+    from rpy2.robjects.vectors import FloatVector
+    from rpy2.robjects.conversion import localconverter
+    from rpy2.rinterface_lib.embedded import RRuntimeError
+    from rpy2.robjects import numpy2ri
+    
+    # Create combined converter that handles both pandas and numpy
+    combined_converter = ro.default_converter + pandas2ri.converter + numpy2ri.converter
+    
+    return ro, r, FloatVector, localconverter, RRuntimeError, combined_converter
 
 
 class ARIMAXModelWrapperRpy2(custom_model.CustomModel):
@@ -35,6 +51,8 @@ class ARIMAXModelWrapperRpy2(custom_model.CustomModel):
     - Type fidelity preserved (no CSV conversion loss)
     
     Compatible with rpy2 3.6.x (uses R evaluation for generic functions).
+    
+    Note: Uses lazy initialization to avoid pickle issues with R objects.
     """
     
     def __init__(self, context: custom_model.ModelContext):
@@ -45,13 +63,31 @@ class ARIMAXModelWrapperRpy2(custom_model.CustomModel):
             context: ModelContext containing 'model_rds' artifact path
         """
         super().__init__(context)
+        # Use lazy initialization - don't load R objects here
+        # R objects contain weak references that can't be pickled
+        self._initialized = False
+        # Unique name for this model instance in R's global environment
+        self._r_model_name = f"arimax_model_{uuid.uuid4().hex[:8]}"
+    
+    def _ensure_initialized(self):
+        """Lazy initialization of R resources - called on first predict."""
+        if self._initialized:
+            return
         
-        # Load forecast library in R
-        ro.r('library(forecast)')
+        # Import rpy2 components lazily
+        ro, _, _, localconverter, _, combined_converter = _get_rpy2_components()
         
-        # Load the R model directly using rpy2
-        model_path = self.context['model_rds']
-        self._model = r['readRDS'](model_path)
+        # Use localconverter to ensure conversion context is available
+        with localconverter(combined_converter):
+            # Load forecast library in R
+            ro.r('library(forecast)')
+            
+            # Load the model DIRECTLY into R's global environment
+            # Keep it there permanently - don't try to pass R objects through Python
+            model_path = self.context['model_rds']
+            ro.r(f'{self._r_model_name} <- readRDS("{model_path}")')
+        
+        self._initialized = True
         
     @custom_model.inference_api
     def predict(self, X: pd.DataFrame) -> pd.DataFrame:
@@ -68,55 +104,92 @@ class ARIMAXModelWrapperRpy2(custom_model.CustomModel):
         Returns:
             DataFrame with columns: forecast, lower_80, upper_80, lower_95, upper_95
         """
+        # Ensure R is initialized (lazy loading to avoid pickle issues)
+        self._ensure_initialized()
+        
         required_cols = ['exog_var1', 'exog_var2']
         if not all(col in X.columns for col in required_cols):
             raise ValueError(f"Input DataFrame must contain columns: {required_cols}")
         
+        # Import rpy2 components lazily
+        ro, r, FloatVector, localconverter, RRuntimeError, combined_converter = _get_rpy2_components()
+        
+        # Generate unique variable names for temporary data (thread-safe)
+        uid = uuid.uuid4().hex[:8]
+        var_xreg = f"xreg_{uid}"
+        var_pred = f"pred_{uid}"
+        
+        # Variable names for extracted results
+        var_mean = f"mean_{uid}"
+        var_lower = f"lower_{uid}"
+        var_upper = f"upper_{uid}"
+        
         try:
-            # Extract exogenous variables and convert to R matrix
-            exog_data = X[required_cols].values
-            n_ahead = len(X)
-            
-            # Create R matrix for xreg (using FloatVector for direct conversion)
-            xreg_new = r['matrix'](
-                FloatVector(exog_data.flatten()),
-                nrow=n_ahead,
-                ncol=2,
-                byrow=True
-            )
-            
-            # Pass data to R environment and call forecast (rpy2 3.6.x compatible)
-            ro.globalenv['temp.model'] = self._model
-            ro.globalenv['temp.xreg'] = xreg_new
-            ro.globalenv['temp.h'] = n_ahead
-            
-            ro.r('colnames(temp.xreg) <- c("exog_var1", "exog_var2")')
-            ro.r('temp.predictions <- forecast(temp.model, xreg=temp.xreg, h=temp.h)')
-            
-            predictions = ro.globalenv['temp.predictions']
-            
-            # Extract prediction components
-            forecast_mean = np.array(predictions.rx2('mean'))
-            lower_intervals = np.array(predictions.rx2('lower'))
-            upper_intervals = np.array(predictions.rx2('upper'))
-            
-            # Clean up R environment
-            ro.r('rm(temp.model, temp.xreg, temp.h, temp.predictions)')
+            # Use localconverter to ensure conversion context is available in threads
+            with localconverter(combined_converter):
+                # Extract exogenous variables
+                exog_data = X[required_cols].values.astype(np.float64)
+                n_ahead = len(X)
+                
+                # Create R matrix for xreg (using FloatVector for direct conversion)
+                xreg_new = r['matrix'](
+                    FloatVector(exog_data.flatten()),
+                    nrow=n_ahead,
+                    ncol=2,
+                    byrow=True
+                )
+                
+                # Pass xreg to R environment
+                ro.globalenv[var_xreg] = xreg_new
+                
+                # Run forecast and extract results all in R
+                # This avoids issues with R-to-Python object conversion
+                ro.r(f'''
+                    colnames({var_xreg}) <- c("exog_var1", "exog_var2")
+                    {var_pred} <- forecast({self._r_model_name}, xreg={var_xreg}, h={n_ahead})
+                    {var_mean} <- as.numeric({var_pred}$mean)
+                    {var_lower} <- as.matrix({var_pred}$lower)
+                    {var_upper} <- as.matrix({var_pred}$upper)
+                ''')
+                
+                # Now retrieve the extracted arrays (these convert cleanly to numpy)
+                forecast_mean = np.array(ro.globalenv[var_mean]).flatten()
+                lower_intervals = np.array(ro.globalenv[var_lower])
+                upper_intervals = np.array(ro.globalenv[var_upper])
+                
+                # Handle single-row case: ensure 2D arrays
+                if lower_intervals.ndim == 1:
+                    lower_intervals = lower_intervals.reshape(1, -1)
+                if upper_intervals.ndim == 1:
+                    upper_intervals = upper_intervals.reshape(1, -1)
+                
+                # Clean up temporary variables only (keep model in R)
+                ro.r(f'rm({var_xreg}, {var_pred}, {var_mean}, {var_lower}, {var_upper})')
             
             # Build output DataFrame
             output = pd.DataFrame({
                 'forecast': forecast_mean,
-                'lower_80': lower_intervals[:, 0],  # 80% interval
+                'lower_80': lower_intervals[:, 0],
                 'upper_80': upper_intervals[:, 0],
-                'lower_95': lower_intervals[:, 1],  # 95% interval
+                'lower_95': lower_intervals[:, 1],
                 'upper_95': upper_intervals[:, 1]
             })
             
             return output
             
         except RRuntimeError as e:
+            # Clean up on error
+            try:
+                ro.r(f'rm({var_xreg}, {var_pred}, {var_mean}, {var_lower}, {var_upper})')
+            except Exception:
+                pass
             raise RuntimeError(f"R execution error: {str(e)}")
         except Exception as e:
+            # Clean up on error
+            try:
+                ro.r(f'rm({var_xreg}, {var_pred}, {var_mean}, {var_lower}, {var_upper})')
+            except Exception:
+                pass
             raise RuntimeError(f"Prediction failed: {str(e)}")
 
 
@@ -140,20 +213,26 @@ class ARIMAXModelWrapperRpy2Lazy(custom_model.CustomModel):
             context: ModelContext containing 'model_rds' artifact path
         """
         super().__init__(context)
-        self._model = None
         self._initialized = False
+        # Unique name for this model instance in R's global environment
+        self._r_model_name = f"arimax_model_{uuid.uuid4().hex[:8]}"
         
     def _ensure_initialized(self):
         """Lazy initialization of R resources."""
         if self._initialized:
             return
-            
-        # Load forecast library in R
-        ro.r('library(forecast)')
         
-        # Load the R model
-        model_path = self.context['model_rds']
-        self._model = r['readRDS'](model_path)
+        # Import rpy2 components lazily
+        ro, _, _, localconverter, _, combined_converter = _get_rpy2_components()
+        
+        # Use localconverter to ensure conversion context is available
+        with localconverter(combined_converter):
+            # Load forecast library in R
+            ro.r('library(forecast)')
+            
+            # Load the model DIRECTLY into R's global environment
+            model_path = self.context['model_rds']
+            ro.r(f'{self._r_model_name} <- readRDS("{model_path}")')
         
         self._initialized = True
     
@@ -175,37 +254,59 @@ class ARIMAXModelWrapperRpy2Lazy(custom_model.CustomModel):
         if not all(col in X.columns for col in required_cols):
             raise ValueError(f"Input DataFrame must contain columns: {required_cols}")
         
+        # Import rpy2 components lazily
+        ro, r, FloatVector, localconverter, RRuntimeError, combined_converter = _get_rpy2_components()
+        
+        # Generate unique variable names for temporary data (thread-safe)
+        uid = uuid.uuid4().hex[:8]
+        var_xreg = f"xreg_{uid}"
+        var_pred = f"pred_{uid}"
+        var_mean = f"mean_{uid}"
+        var_lower = f"lower_{uid}"
+        var_upper = f"upper_{uid}"
+        
         try:
-            # Extract exogenous variables and convert to R matrix
-            exog_data = X[required_cols].values
-            n_ahead = len(X)
+            # Use localconverter to ensure conversion context is available in threads
+            with localconverter(combined_converter):
+                # Extract exogenous variables
+                exog_data = X[required_cols].values.astype(np.float64)
+                n_ahead = len(X)
+                
+                # Create R matrix for xreg
+                xreg_new = r['matrix'](
+                    FloatVector(exog_data.flatten()),
+                    nrow=n_ahead,
+                    ncol=2,
+                    byrow=True
+                )
+                
+                # Pass xreg to R environment
+                ro.globalenv[var_xreg] = xreg_new
+                
+                # Run forecast and extract results all in R
+                ro.r(f'''
+                    colnames({var_xreg}) <- c("exog_var1", "exog_var2")
+                    {var_pred} <- forecast({self._r_model_name}, xreg={var_xreg}, h={n_ahead})
+                    {var_mean} <- as.numeric({var_pred}$mean)
+                    {var_lower} <- as.matrix({var_pred}$lower)
+                    {var_upper} <- as.matrix({var_pred}$upper)
+                ''')
+                
+                # Now retrieve the extracted arrays (these convert cleanly to numpy)
+                forecast_mean = np.array(ro.globalenv[var_mean]).flatten()
+                lower_intervals = np.array(ro.globalenv[var_lower])
+                upper_intervals = np.array(ro.globalenv[var_upper])
+                
+                # Handle single-row case: ensure 2D arrays
+                if lower_intervals.ndim == 1:
+                    lower_intervals = lower_intervals.reshape(1, -1)
+                if upper_intervals.ndim == 1:
+                    upper_intervals = upper_intervals.reshape(1, -1)
+                
+                # Clean up temporary variables only (keep model in R)
+                ro.r(f'rm({var_xreg}, {var_pred}, {var_mean}, {var_lower}, {var_upper})')
             
-            # Create R matrix for xreg
-            xreg_new = r['matrix'](
-                FloatVector(exog_data.flatten()),
-                nrow=n_ahead,
-                ncol=2,
-                byrow=True
-            )
-            
-            # Pass data to R environment and call forecast (rpy2 3.6.x compatible)
-            ro.globalenv['temp.model'] = self._model
-            ro.globalenv['temp.xreg'] = xreg_new
-            ro.globalenv['temp.h'] = n_ahead
-            
-            ro.r('colnames(temp.xreg) <- c("exog_var1", "exog_var2")')
-            ro.r('temp.predictions <- forecast(temp.model, xreg=temp.xreg, h=temp.h)')
-            
-            predictions = ro.globalenv['temp.predictions']
-            
-            # Extract results
-            forecast_mean = np.array(predictions.rx2('mean'))
-            lower_intervals = np.array(predictions.rx2('lower'))
-            upper_intervals = np.array(predictions.rx2('upper'))
-            
-            # Clean up R environment
-            ro.r('rm(temp.model, temp.xreg, temp.h, temp.predictions)')
-            
+            # Build output DataFrame
             output = pd.DataFrame({
                 'forecast': forecast_mean,
                 'lower_80': lower_intervals[:, 0],
@@ -217,8 +318,18 @@ class ARIMAXModelWrapperRpy2Lazy(custom_model.CustomModel):
             return output
             
         except RRuntimeError as e:
+            # Clean up on error
+            try:
+                ro.r(f'rm({var_xreg}, {var_pred}, {var_mean}, {var_lower}, {var_upper})')
+            except Exception:
+                pass
             raise RuntimeError(f"R execution error: {str(e)}")
         except Exception as e:
+            # Clean up on error
+            try:
+                ro.r(f'rm({var_xreg}, {var_pred}, {var_mean}, {var_lower}, {var_upper})')
+            except Exception:
+                pass
             raise RuntimeError(f"Prediction failed: {str(e)}")
 
 
@@ -234,7 +345,8 @@ def convert_pandas_to_r(df: pd.DataFrame):
     Returns:
         R data.frame object
     """
-    with localconverter(ro.default_converter + pandas2ri.converter):
+    ro, _, _, localconverter, _, combined_converter = _get_rpy2_components()
+    with localconverter(combined_converter):
         return ro.conversion.py2rpy(df)
 
 
@@ -250,5 +362,6 @@ def convert_r_to_pandas(r_obj) -> pd.DataFrame:
     Returns:
         pandas DataFrame
     """
-    with localconverter(ro.default_converter + pandas2ri.converter):
+    ro, _, _, localconverter, _, combined_converter = _get_rpy2_components()
+    with localconverter(combined_converter):
         return ro.conversion.rpy2py(r_obj)
