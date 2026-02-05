@@ -2,12 +2,21 @@
 R Environment Helpers for Snowflake Workspace Notebooks
 
 This module provides helper functions for:
+- R environment setup and configuration
 - PAT (Programmatic Access Token) management
-- Environment diagnostics
-- R/rpy2 setup validation
+- Environment diagnostics and validation
+- R connection management for ADBC
+- Output formatting helpers for cleaner display
 
 Usage:
     from r_helpers import setup_r_environment, create_pat, check_environment
+    from r_helpers import set_r_console_width  # Adjust R output width
+    from r_helpers import init_r_output_helpers  # Load rprint, rview, rglimpse
+    
+After setup, use in R cells:
+    rprint(x)      - Print any object cleanly
+    rview(df, n)   - View data frame (optional row limit)  
+    rglimpse(df)   - Glimpse data frame structure
 """
 
 import os
@@ -121,8 +130,127 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
         except Exception as e:
             result['errors'].append(f"Failed to register magic: {e}")
     
+    # Configure R console width for better output formatting
+    if result['rpy2_installed']:
+        try:
+            import rpy2.robjects as ro
+            ro.r('options(width = 120)')  # Wider console output
+            ro.r('options(tibble.width = Inf)')  # Show all tibble columns
+            ro.r('options(pillar.width = Inf)')  # Pillar (tibble printing) width
+            result['console_configured'] = True
+            
+            # Load output helpers for cleaner formatting in Workspace Notebooks
+            ro.r(R_OUTPUT_HELPERS_CODE)
+            result['output_helpers_loaded'] = True
+        except Exception as e:
+            result['errors'].append(f"Failed to configure R console: {e}")
+    
     result['success'] = len(result['errors']) == 0
     return result
+
+
+# R output helpers code - can be loaded independently of connection management
+R_OUTPUT_HELPERS_CODE = '''
+# =============================================================================
+# Output Helpers for Workspace Notebooks
+# =============================================================================
+# Workspace Notebooks add extra line breaks to R output.
+# These helpers produce cleaner formatting.
+
+#' Print an object cleanly (workaround for Workspace Notebook rendering)
+#' 
+#' @param x Object to print
+#' @param ... Additional arguments passed to print()
+#' @examples
+#' rprint(mtcars)
+#' rprint(head(iris, 10))
+rprint <- function(x, ...) {
+  writeLines(capture.output(print(x, ...)))
+  invisible(x)
+}
+
+#' View a data frame cleanly
+#' 
+#' @param df Data frame to display
+#' @param n Number of rows to show (default: all)
+#' @examples
+#' rview(mtcars)
+#' rview(iris, n = 10)
+rview <- function(df, n = NULL) {
+  if (!is.null(n)) {
+    df <- head(df, n)
+  }
+  writeLines(capture.output(print(df)))
+  invisible(df)
+}
+
+#' Print a tibble/data frame with glimpse, cleanly formatted
+#' 
+#' @param df Data frame to glimpse
+rglimpse <- function(df) {
+  if (requireNamespace("dplyr", quietly = TRUE)) {
+    writeLines(capture.output(dplyr::glimpse(df)))
+  } else {
+    writeLines(capture.output(str(df)))
+  }
+  invisible(df)
+}
+
+message("Output helpers loaded (use these for cleaner formatting):")
+message("  - rprint(x)      : Print any object cleanly")
+message("  - rview(df, n)   : View data frame (optional row limit)")
+message("  - rglimpse(df)   : Glimpse data frame structure")
+'''
+
+
+def init_r_output_helpers() -> Tuple[bool, str]:
+    """
+    Load R output helper functions for cleaner display in Workspace Notebooks.
+    
+    Workspace Notebooks add extra line breaks to R output. These helpers
+    use writeLines(capture.output(...)) to produce cleaner formatting.
+    
+    Functions loaded:
+    - rprint(x): Print any object cleanly
+    - rview(df, n): View data frame with optional row limit
+    - rglimpse(df): Glimpse data frame structure
+    
+    Returns:
+        Tuple of (success, message)
+    
+    Example:
+        >>> init_r_output_helpers()
+        >>> # Then in R: rprint(mtcars), rview(iris, n=10)
+    """
+    try:
+        import rpy2.robjects as ro
+        ro.r(R_OUTPUT_HELPERS_CODE)
+        return True, "R output helpers loaded"
+    except Exception as e:
+        return False, f"Failed to load R output helpers: {e}"
+
+
+def set_r_console_width(width: int = 120, tibble_width: Optional[int] = None) -> None:
+    """
+    Set R console width for better output formatting in notebooks.
+    
+    Args:
+        width: Console width in characters (default: 120)
+        tibble_width: Width for tibble printing (default: Inf for all columns)
+    
+    Example:
+        >>> set_r_console_width(150)  # Wider output
+        >>> set_r_console_width(80)   # Narrower output
+    """
+    import rpy2.robjects as ro
+    ro.r(f'options(width = {width})')
+    
+    if tibble_width is None:
+        ro.r('options(tibble.width = Inf)')
+        ro.r('options(pillar.width = Inf)')
+    else:
+        ro.r(f'options(tibble.width = {tibble_width})')
+        ro.r(f'options(pillar.width = {tibble_width})')
 
 
 # =============================================================================
