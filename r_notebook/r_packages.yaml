@@ -37,7 +37,7 @@ r_version: ""  # Leave empty for latest
 conda_packages:
   - r-tidyverse      # Data manipulation and visualization (dplyr, ggplot2, tidyr, etc.)
   - r-lazyeval       # Required for some tidyverse operations
-  - reticulate       # R interface to Python (useful for advanced interop)
+  - r-reticulate       # R interface to Python (useful for advanced interop)
   # Examples with version pinning:
   # - r-dplyr=1.1.4        # Pin to exact version
   # - r-ggplot2>=3.4.0     # Require minimum version
