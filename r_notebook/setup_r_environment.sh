@@ -18,6 +18,11 @@
 #   --verbose     Show detailed output
 #   --help        Show this help message
 #
+# Configuration (r_packages.yaml):
+#   r_version:      R version to install (empty for latest)
+#   conda_packages: Packages from conda-forge (supports version pinning: =, >=, <=)
+#   cran_packages:  Packages from CRAN (supports exact version pinning with ==)
+#
 # Examples:
 #   ./setup_r_environment.sh                    # Basic R installation
 #   ./setup_r_environment.sh --adbc             # R + ADBC driver
@@ -41,8 +46,8 @@ MICROMAMBA_ROOT="${HOME}/micromamba"
 ENV_NAME="r_env"
 CHANNEL="conda-forge"
 
-# Version pinning for reproducibility (set to empty for latest)
-R_VERSION=""  # e.g., "4.3.2" or empty for latest
+# R version - read from YAML config (empty means latest)
+R_VERSION=""
 
 # Retry configuration
 MAX_RETRIES=3
@@ -199,9 +204,18 @@ Options:
   --verbose     Show detailed output
   --help        Show this help message
 
-The package configuration file (r_packages.yaml) should contain:
-  - conda_packages: List of conda-forge package names (e.g., r-base, r-tidyverse)
-  - cran_packages: List of CRAN package names to install via install.packages()
+The package configuration file (r_packages.yaml) supports:
+
+  r_version: "4.3.2"        # R version (empty or omit for latest)
+  
+  conda_packages:           # Conda-forge packages with version specifiers
+    - r-tidyverse           # Latest version
+    - r-dplyr=1.1.4         # Exact version
+    - r-ggplot2>=3.4.0      # Minimum version
+  
+  cran_packages:            # CRAN packages
+    - prophet               # Latest version
+    - forecast==8.21        # Exact version (uses remotes::install_version)
 
 Examples:
   ./setup_r_environment.sh                    # Basic R installation
@@ -288,34 +302,46 @@ main() {
     
     log_info "Reading package configuration..."
     
-    # Get conda packages
-    CONDA_PACKAGES=$(python3 << PYEOF
+    # Parse entire config at once for efficiency
+    eval "$(python3 << PYEOF
 import yaml
+
 with open("${CONFIG_FILE}", 'r') as f:
     config = yaml.safe_load(f)
-packages = config.get('conda_packages', [])
-if packages:
-    print(' '.join(packages))
+
+# Get R version (empty string if not specified or null)
+r_version = config.get('r_version', '') or ''
+print(f'R_VERSION="{r_version}"')
+
+# Get conda packages (preserve version specifiers)
+conda_packages = config.get('conda_packages', []) or []
+# Quote each package to handle version specifiers with special chars
+conda_str = ' '.join(f'"{p}"' for p in conda_packages) if conda_packages else ''
+print(f'CONDA_PACKAGES=({conda_str})')
+
+# Get CRAN packages (may include version specifiers with ==)
+cran_packages = config.get('cran_packages', []) or []
+# Separate versioned and unversioned packages
+cran_latest = []
+cran_versioned = []
+for pkg in cran_packages:
+    if '==' in str(pkg):
+        name, version = str(pkg).split('==', 1)
+        cran_versioned.append(f'{name.strip()}:{version.strip()}')
+    else:
+        cran_latest.append(str(pkg))
+
+cran_latest_str = ' '.join(cran_latest) if cran_latest else ''
+cran_versioned_str = ' '.join(cran_versioned) if cran_versioned else ''
+print(f'CRAN_PACKAGES_LATEST="{cran_latest_str}"')
+print(f'CRAN_PACKAGES_VERSIONED="{cran_versioned_str}"')
 PYEOF
-)
+)"
     
-    # Get CRAN packages
-    CRAN_PACKAGES=$(python3 << PYEOF
-import yaml
-with open("${CONFIG_FILE}", 'r') as f:
-    config = yaml.safe_load(f)
-packages = config.get('cran_packages', [])
-if packages:
-    print(' '.join(packages))
-PYEOF
-)
-    
-    log_info "  Conda packages: ${CONDA_PACKAGES:-<none>}"
-    log_info "  CRAN packages:  ${CRAN_PACKAGES:-<none>}"
+    log_info "  R version:      ${R_VERSION:-<latest>}"
+    log_info "  Conda packages: ${CONDA_PACKAGES[*]:-<none>}"
+    log_info "  CRAN packages:  ${CRAN_PACKAGES_LATEST:-<none>} ${CRAN_PACKAGES_VERSIONED:+(versioned: $CRAN_PACKAGES_VERSIONED)}"
     echo ""
-    
-    # Convert space-separated list to array
-    read -ra R_CONDA_PACKAGES <<< "${CONDA_PACKAGES}"
     
     # =========================================================================
     # Step 1: Install micromamba
@@ -350,26 +376,53 @@ PYEOF
     echo ""
     log_info "Step 2: Setting up R environment..."
     
-    if [ ${#R_CONDA_PACKAGES[@]} -eq 0 ]; then
-        log_error "No conda packages specified. At minimum, r-base is required."
+    # Build the package list, ensuring r-base is included
+    INSTALL_PACKAGES=()
+    HAS_R_BASE=false
+    
+    # Check if r-base is already in the list
+    for pkg in "${CONDA_PACKAGES[@]}"; do
+        if [[ "${pkg}" == r-base* ]]; then
+            HAS_R_BASE=true
+            # If R_VERSION is specified and this is just "r-base", add version
+            if [ -n "${R_VERSION}" ] && [ "${pkg}" = "r-base" ]; then
+                INSTALL_PACKAGES+=("r-base=${R_VERSION}")
+                log_info "  Pinning R version to ${R_VERSION}"
+            else
+                INSTALL_PACKAGES+=("${pkg}")
+            fi
+        else
+            INSTALL_PACKAGES+=("${pkg}")
+        fi
+    done
+    
+    # Add r-base if not present
+    if [ "${HAS_R_BASE}" = false ]; then
+        if [ -n "${R_VERSION}" ]; then
+            INSTALL_PACKAGES=("r-base=${R_VERSION}" "${INSTALL_PACKAGES[@]}")
+            log_info "  Adding r-base=${R_VERSION}"
+        else
+            INSTALL_PACKAGES=("r-base" "${INSTALL_PACKAGES[@]}")
+            log_info "  Adding r-base (latest)"
+        fi
+    fi
+    
+    if [ ${#INSTALL_PACKAGES[@]} -eq 0 ]; then
+        log_error "No packages to install."
         exit 1
     fi
     
-    # Add version pin if specified
-    if [ -n "${R_VERSION}" ]; then
-        log_info "  Pinning R version to ${R_VERSION}"
-        R_CONDA_PACKAGES=("${R_CONDA_PACKAGES[@]/r-base/r-base=${R_VERSION}}")
-    fi
+    log_debug "  Final package list: ${INSTALL_PACKAGES[*]}"
     
     if ! micromamba env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
         log_info "  Creating environment '${ENV_NAME}'..."
         retry_command \
-            "micromamba create -y -n '${ENV_NAME}' -c '${CHANNEL}' ${R_CONDA_PACKAGES[*]}" \
+            "micromamba create -y -n '${ENV_NAME}' -c '${CHANNEL}' ${INSTALL_PACKAGES[*]}" \
             "Create R environment"
     else
         log_info "  Environment '${ENV_NAME}' exists, updating packages..."
         retry_command \
-            "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' ${R_CONDA_PACKAGES[*]}" \
+            "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' ${INSTALL_PACKAGES[*]}" \
             "Update R environment"
     fi
     
@@ -433,27 +486,62 @@ PYEOF
     # Step 5: Install CRAN Packages
     # =========================================================================
     
-    if [ -n "${CRAN_PACKAGES}" ]; then
-        echo ""
+    echo ""
+    if [ -n "${CRAN_PACKAGES_LATEST}" ] || [ -n "${CRAN_PACKAGES_VERSIONED}" ]; then
         log_info "Step 5: Installing CRAN packages..."
         
-        # Convert to R vector format
-        CRAN_VECTOR=$(echo "${CRAN_PACKAGES}" | tr ' ' '\n' | sed 's/.*/"&"/' | tr '\n' ',' | sed 's/,$//')
-        
         "${ENV_PREFIX}/bin/R" --vanilla --quiet << REOF
-cran_pkgs <- c(${CRAN_VECTOR})
-installed <- rownames(installed.packages())
-missing <- setdiff(cran_pkgs, installed)
+# Install latest versions of packages
+latest_pkgs <- strsplit("${CRAN_PACKAGES_LATEST}", " ")[[1]]
+latest_pkgs <- latest_pkgs[latest_pkgs != ""]
 
-if (length(missing) > 0) {
-    message("Installing CRAN packages: ", paste(missing, collapse = ", "))
-    install.packages(missing, repos = "https://cloud.r-project.org", quiet = TRUE)
-} else {
-    message("All CRAN packages already installed")
+if (length(latest_pkgs) > 0) {
+    installed <- rownames(installed.packages())
+    missing <- setdiff(latest_pkgs, installed)
+    
+    if (length(missing) > 0) {
+        message("Installing CRAN packages (latest): ", paste(missing, collapse = ", "))
+        install.packages(missing, repos = "https://cloud.r-project.org", quiet = TRUE)
+    } else {
+        message("All CRAN packages (latest) already installed")
+    }
 }
+
+# Install specific versions using remotes::install_version
+versioned_pkgs <- strsplit("${CRAN_PACKAGES_VERSIONED}", " ")[[1]]
+versioned_pkgs <- versioned_pkgs[versioned_pkgs != ""]
+
+if (length(versioned_pkgs) > 0) {
+    # Ensure remotes is installed
+    if (!requireNamespace("remotes", quietly = TRUE)) {
+        message("Installing 'remotes' package for version-specific installations...")
+        install.packages("remotes", repos = "https://cloud.r-project.org", quiet = TRUE)
+    }
+    
+    for (pkg_spec in versioned_pkgs) {
+        parts <- strsplit(pkg_spec, ":")[[1]]
+        pkg_name <- parts[1]
+        pkg_version <- parts[2]
+        
+        # Check if correct version is already installed
+        if (requireNamespace(pkg_name, quietly = TRUE)) {
+            installed_ver <- as.character(packageVersion(pkg_name))
+            if (installed_ver == pkg_version) {
+                message(sprintf("%s version %s already installed", pkg_name, pkg_version))
+                next
+            }
+        }
+        
+        message(sprintf("Installing %s version %s...", pkg_name, pkg_version))
+        remotes::install_version(pkg_name, version = pkg_version, 
+                                  repos = "https://cloud.r-project.org", 
+                                  quiet = TRUE, upgrade = "never")
+    }
+}
+
+message("CRAN package installation complete")
 REOF
     else
-        echo ""
         log_info "Step 5: No CRAN packages to install"
     fi
     

@@ -449,7 +449,17 @@ def _check_rpy2() -> Dict[str, Any]:
     
     try:
         import rpy2
-        result['details']['version'] = rpy2.__version__
+        
+        # Get version - handle different rpy2 versions
+        try:
+            # Try modern approach first (Python 3.8+)
+            from importlib.metadata import version as get_version
+            rpy2_version = get_version('rpy2')
+        except Exception:
+            # Fall back to checking module attributes
+            rpy2_version = getattr(rpy2, '__version__', 'unknown')
+        
+        result['details']['version'] = rpy2_version
         result['details']['installed'] = True
         
         # Check if rpy2 can connect to R
@@ -575,11 +585,12 @@ def _check_network() -> Dict[str, Any]:
     """Check network connectivity to required endpoints."""
     result = {'ok': False, 'details': {}, 'errors': []}
     
+    # Use URLs that reliably return 200 OK for GET requests
+    # Some servers don't support HEAD requests or return non-200 for root paths
     endpoints = {
-        'conda-forge': 'https://conda.anaconda.org/conda-forge',
+        'conda-forge': 'https://conda.anaconda.org/conda-forge/noarch/repodata.json',
         'cran': 'https://cloud.r-project.org',
-        'r-multiverse': 'https://community.r-multiverse.org',
-        'micromamba': 'https://micro.mamba.pm'
+        'pypi': 'https://pypi.org/simple/',
     }
     
     import urllib.request
@@ -587,9 +598,25 @@ def _check_network() -> Dict[str, Any]:
     
     for name, url in endpoints.items():
         try:
-            req = urllib.request.Request(url, method='HEAD')
-            urllib.request.urlopen(req, timeout=5)
-            result['details'][name] = 'reachable'
+            req = urllib.request.Request(
+                url, 
+                headers={'User-Agent': 'Mozilla/5.0 (diagnostic check)'}
+            )
+            response = urllib.request.urlopen(req, timeout=10)
+            # Accept any 2xx status code
+            if 200 <= response.status < 300:
+                result['details'][name] = 'reachable'
+            else:
+                result['details'][name] = f'status: {response.status}'
+        except urllib.error.HTTPError as e:
+            # HTTP errors (4xx, 5xx) - server responded, so network works
+            # But we still consider it an issue if we can't access resources
+            if e.code in (401, 403):
+                # Auth issues mean network works, server is reachable
+                result['details'][name] = 'reachable (auth required)'
+            else:
+                result['details'][name] = f'http error: {e.code}'
+                result['errors'].append(f"HTTP {e.code} from {name} ({url})")
         except urllib.error.URLError as e:
             result['details'][name] = f'unreachable: {e.reason}'
             result['errors'].append(f"Cannot reach {name} ({url})")

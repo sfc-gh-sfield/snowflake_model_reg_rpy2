@@ -42,19 +42,37 @@ The script includes:
 - Automatic retry for network operations
 - Logging to `setup_r.log`
 
-## Customizing R Packages
+## Customizing R Version and Packages
 
-Edit `r_packages.yaml` to add or remove packages:
+Edit `r_packages.yaml` to customize your R environment:
 
 ```yaml
-conda_packages:
-  - r-base           # Required
-  - r-tidyverse      # Data manipulation
-  - r-yourpackage    # Add your packages here
+# Specify R version (leave empty for latest)
+r_version: "4.3.2"    # Or "" for latest available
 
+# Conda packages with optional version pinning
+conda_packages:
+  - r-tidyverse           # Latest version
+  - r-dplyr=1.1.4         # Exact version
+  - r-ggplot2>=3.4.0      # Minimum version
+  - r-yourpackage         # Add your packages here
+
+# CRAN packages with optional version pinning
 cran_packages:
-  - somepackage      # Packages not on conda-forge
+  - prophet               # Latest version
+  - forecast==8.21        # Exact version (uses remotes::install_version)
 ```
+
+### Version Specifiers
+
+| Type | Syntax | Example |
+|------|--------|---------|
+| Conda (latest) | `package` | `r-tidyverse` |
+| Conda (exact) | `package=version` | `r-dplyr=1.1.4` |
+| Conda (minimum) | `package>=version` | `r-ggplot2>=3.4.0` |
+| Conda (range) | `package>=min,<max` | `r-base>=4.3,<4.5` |
+| CRAN (latest) | `package` | `prophet` |
+| CRAN (exact) | `package==version` | `forecast==8.21` |
 
 ## Features
 
