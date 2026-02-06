@@ -121,6 +121,8 @@ Workspace Notebooks add extra line breaks to R output. Use these R functions for
 | `rprint(x)` | `rprint(df)` | Print any object cleanly |
 | `rview(df, n)` | `rview(iris, n=10)` | View data frame with optional row limit |
 | `rglimpse(df)` | `rglimpse(df)` | Glimpse data frame structure |
+| `rcat(...)` | `rcat("Value: ", x)` | Clean replacement for cat() |
+| `print_connection_status()` | | Print ADBC connection status |
 
 ```r
 %%R
@@ -132,6 +134,18 @@ rglimpse(df)
 
 # View first 10 rows:
 rview(my_data, n = 10)
+```
+
+### Python DataFrame Output
+
+The `tabulate` package is installed automatically, enabling nice DataFrame output:
+
+```python
+# Markdown table output (renders nicely in notebooks)
+print(df.to_markdown())
+
+# Or for simpler display:
+print(df.to_string())
 ```
 
 ### Connection Pooling (R)

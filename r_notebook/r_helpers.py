@@ -69,6 +69,7 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
         'r_home': None,
         'r_version': None,
         'rpy2_installed': False,
+        'tabulate_installed': False,
         'magic_registered': False,
         'errors': []
     }
@@ -105,9 +106,10 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
     except Exception as e:
         result['errors'].append(f"Failed to get R version: {e}")
     
-    # Install rpy2 if requested
+    # Install rpy2 and tabulate if requested
     if install_rpy2:
         try:
+            # Install rpy2 for R integration
             subprocess.run(
                 [sys.executable, "-m", "pip", "install", "rpy2", "-q"],
                 check=True,
@@ -115,10 +117,19 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
                 timeout=120
             )
             result['rpy2_installed'] = True
+            
+            # Install tabulate for nice DataFrame output (df.to_markdown())
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "tabulate", "-q"],
+                check=True,
+                capture_output=True,
+                timeout=60
+            )
+            result['tabulate_installed'] = True
         except subprocess.CalledProcessError as e:
-            result['errors'].append(f"Failed to install rpy2: {e}")
+            result['errors'].append(f"Failed to install packages: {e}")
         except subprocess.TimeoutExpired:
-            result['errors'].append("rpy2 installation timed out")
+            result['errors'].append("Package installation timed out")
     
     # Register magic if requested
     if register_magic and result['rpy2_installed']:
