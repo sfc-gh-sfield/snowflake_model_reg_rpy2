@@ -87,16 +87,18 @@ cran_packages:
 - Arrow-based data transfer for performance
 
 ### Helper Module (`r_helpers.py`)
-- `setup_r_environment()` - Configure R in one call
+- `setup_r_environment()` - Configure R in one call (also loads output helpers)
 - `PATManager` - PAT creation, expiry tracking, refresh
 - `check_environment()` - Comprehensive diagnostics
 - `validate_adbc_connection()` - Pre-connection validation
 - `init_r_connection_management()` - Load R connection functions
+- `init_r_output_helpers()` - Load R output formatting functions
+- `set_r_console_width()` - Adjust R console width
 
 ```python
 from r_helpers import setup_r_environment, PATManager, init_r_connection_management
 
-# Setup R
+# Setup R (also loads output helpers automatically)
 result = setup_r_environment()
 
 # Manage PAT
@@ -105,6 +107,28 @@ pat_mgr.create_pat(days_to_expiry=1)
 
 # Initialize connection management
 init_r_connection_management()
+```
+
+### Output Helpers (R functions)
+
+Workspace Notebooks add extra line breaks to R output. Use these R functions for cleaner display:
+
+| Function | Usage | Description |
+|----------|-------|-------------|
+| `rprint(x)` | `rprint(df)` | Print any object cleanly |
+| `rview(df, n)` | `rview(iris, n=10)` | View data frame with optional row limit |
+| `rglimpse(df)` | `rglimpse(df)` | Glimpse data frame structure |
+
+```r
+%%R
+# Instead of print(df), use:
+rprint(df)
+
+# Instead of glimpse(df), use:
+rglimpse(df)
+
+# View first 10 rows:
+rview(my_data, n = 10)
 ```
 
 ### Connection Pooling (R)
@@ -137,6 +161,8 @@ close_snowflake_connection()  # Clean up
 | Package not found | Add to `r_packages.yaml` and re-run setup |
 | Setup script fails | Check `setup_r.log` for details |
 | Disk space error | Free up space (minimum 2GB required) |
+| R output has extra line breaks | Use `rprint()`, `rview()`, or `rglimpse()` |
+| `rprint` not found | Re-run `setup_r_environment()` or `init_r_output_helpers()` |
 
 ### Run Diagnostics
 ```python
