@@ -148,9 +148,10 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
     if result['rpy2_installed']:
         try:
             import rpy2.robjects as ro
-            ro.r('options(width = 120)')  # Wider console output
+            ro.r('options(width = 200)')  # Wide console output for notebooks
             ro.r('options(tibble.width = Inf)')  # Show all tibble columns
             ro.r('options(pillar.width = Inf)')  # Pillar (tibble printing) width
+            ro.r('options(tibble.print_max = 50)')  # Show more rows
             result['console_configured'] = True
             
             # Load output helpers for cleaner formatting in Workspace Notebooks

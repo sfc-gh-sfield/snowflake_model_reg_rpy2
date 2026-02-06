@@ -168,6 +168,21 @@ print(df.to_markdown())
 print(df.to_string())
 ```
 
+### Reticulate Output Pattern
+
+When using reticulate (Section 5), export R data frames to Python using `-o` for nice Notebook display:
+
+```r
+%%R -o result_df
+# R code that creates result_df
+result_df <- session$sql("SELECT * FROM table")$to_pandas()
+```
+
+```python
+# Next cell - Python displays the DataFrame nicely
+result_df
+```
+
 ### Connection Pooling (R)
 The connection is stored as `r_sf_con` and reused across cells:
 ```r
