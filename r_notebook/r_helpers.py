@@ -199,10 +199,40 @@ rglimpse <- function(df) {
   invisible(df)
 }
 
+#' Clean replacement for cat() in Workspace Notebooks
+#' 
+#' Builds the entire string first, then outputs with writeLines()
+#' to avoid extra line breaks that Workspace Notebooks adds.
+#' 
+#' @param ... Arguments to concatenate (like cat())
+#' @param sep Separator between arguments (default: "")
+#' @examples
+#' rcat("Value:", 42, "\n")
+#' rcat("Name: ", name, ", Age: ", age, "\n")
+rcat <- function(..., sep = "") {
+  args <- list(...)
+  output <- paste(sapply(args, as.character), collapse = sep)
+  writeLines(output)
+  invisible(NULL)
+}
+
+#' Print multiple lines cleanly
+#' 
+#' @param ... Lines to print (each argument is a separate line)
+#' @examples
+#' rlines("Line 1", "Line 2", "Line 3")
+rlines <- function(...) {
+  lines <- c(...)
+  writeLines(paste(lines, collapse = "\n"))
+  invisible(NULL)
+}
+
 message("Output helpers loaded (use these for cleaner formatting):")
 message("  - rprint(x)      : Print any object cleanly")
 message("  - rview(df, n)   : View data frame (optional row limit)")
 message("  - rglimpse(df)   : Glimpse data frame structure")
+message("  - rcat(...)      : Clean replacement for cat()")
+message("  - rlines(...)    : Print multiple lines cleanly")
 '''
 
 
@@ -1528,11 +1558,35 @@ snowflake_connection_status <- function() {
   )
 }
 
+#' Print connection status cleanly (for Workspace Notebooks)
+#' 
+#' Builds the entire output string before printing to avoid
+#' Workspace Notebooks adding extra line breaks.
+print_connection_status <- function() {
+  status <- snowflake_connection_status()
+  
+  # Build output string all at once
+  output <- paste0(
+    "Connection Status:\n",
+    "  Connected:  ", status$connected, "\n",
+    "  Account:    ", status$account, "\n",
+    "  User:       ", status$user, "\n",
+    "  Database:   ", status$database, "\n",
+    "  PAT set:    ", status$pat_set, "\n",
+    "  con_exists: ", status$con_exists, "\n",
+    "  db_exists:  ", status$db_exists
+  )
+  
+  writeLines(output)
+  invisible(status)
+}
+
 message("R connection management functions loaded:")
 message("  - get_snowflake_connection()    : Get or create connection (stored as r_sf_con)")
 message("  - close_snowflake_connection()  : Close and release connection")
 message("  - is_snowflake_connected()      : Check if connected")
-message("  - snowflake_connection_status() : Get detailed status")
+message("  - snowflake_connection_status() : Get detailed status (returns list)")
+message("  - print_connection_status()     : Print status cleanly")
 '''
 
 
