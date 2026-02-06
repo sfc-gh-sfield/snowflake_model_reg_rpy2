@@ -19,7 +19,8 @@ This folder contains everything needed to run R within Snowflake Workspace Noteb
 | `r_packages.yaml` | Package configuration (edit to customize) |
 | `r_helpers.py` | Helper module for PAT management and diagnostics |
 | `setup_r.log` | Installation log (created on run) |
-| `archive/` | Legacy scripts and original notebook (for reference) |
+| `archive/` | Legacy files (for reference) |
+| `archive/auth_methods_not_working.ipynb` | Tests for blocked auth methods (SPCS OAuth, password) |
 
 ## Installation Options
 
@@ -83,7 +84,9 @@ cran_packages:
 
 ### Snowflake Connectivity (with `--adbc`)
 - Direct R-to-Snowflake queries via ADBC
-- PAT (Programmatic Access Token) authentication
+- Authentication options:
+  - **PAT (Programmatic Access Token)** - Recommended, can be created programmatically
+  - **Key Pair (JWT)** - Alternative, requires pre-registering public key
 - Arrow-based data transfer for performance
 
 ### Helper Module (`r_helpers.py`)
@@ -166,7 +169,7 @@ close_snowflake_connection()  # Clean up
 ## Limitations
 
 - No native R kernel (use `%%R` magic instead)
-- SPCS OAuth token cannot be used for ADBC (PAT required)
+- SPCS OAuth token cannot be used for ADBC (use PAT or Key Pair instead)
 - Setup required each new session (~2-5 minutes)
 
 ## Troubleshooting

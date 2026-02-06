@@ -868,8 +868,8 @@ test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
     db <- do.call(adbc_database_init, args)
     con <- adbc_connection_init(db)
     
-    # Test query
-    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'KEY_PAIR' AS AUTH_METHOD")
+    # Test query - collect to data frame to release the stream
+    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'KEY_PAIR' AS AUTH_METHOD") |> as.data.frame()
     message("✓ Key Pair authentication SUCCESSFUL")
     rprint(result)
     
@@ -925,8 +925,8 @@ test_oauth_auth <- function(token = NULL) {
     )
     con <- adbc_connection_init(db)
     
-    # Test query
-    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'OAUTH' AS AUTH_METHOD")
+    # Test query - collect to data frame to release the stream
+    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'OAUTH' AS AUTH_METHOD") |> as.data.frame()
     message("✓ OAuth authentication SUCCESSFUL")
     rprint(result)
     
@@ -1002,7 +1002,7 @@ test_password_auth <- function(password = NULL) {
     )
     con <- adbc_connection_init(db)
     
-    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'PASSWORD' AS AUTH_METHOD")
+    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'PASSWORD' AS AUTH_METHOD") |> as.data.frame()
     message("✓ Password authentication SUCCESSFUL (unexpected!)")
     rprint(result)
     
