@@ -89,10 +89,13 @@ cran_packages:
 ### Helper Module (`r_helpers.py`)
 - `setup_r_environment()` - Configure R in one call (also loads output helpers)
 - `PATManager` - PAT creation, expiry tracking, refresh
+- `KeyPairAuth` - RSA key pair authentication setup
+- `OAuthAuth` - OAuth token authentication setup
 - `check_environment()` - Comprehensive diagnostics
 - `validate_adbc_connection()` - Pre-connection validation
 - `init_r_connection_management()` - Load R connection functions
 - `init_r_output_helpers()` - Load R output formatting functions
+- `init_r_alt_auth()` - Load R alternative auth test functions
 - `set_r_console_width()` - Adjust R console width
 
 ```python

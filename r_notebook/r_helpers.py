@@ -4,6 +4,7 @@ R Environment Helpers for Snowflake Workspace Notebooks
 This module provides helper functions for:
 - R environment setup and configuration
 - PAT (Programmatic Access Token) management
+- Alternative authentication methods (Key Pair, OAuth)
 - Environment diagnostics and validation
 - R connection management for ADBC
 - Output formatting helpers for cleaner display
@@ -12,6 +13,8 @@ Usage:
     from r_helpers import setup_r_environment, create_pat, check_environment
     from r_helpers import set_r_console_width  # Adjust R output width
     from r_helpers import init_r_output_helpers  # Load rprint, rview, rglimpse
+    from r_helpers import KeyPairAuth, OAuthAuth  # Alternative auth methods
+    from r_helpers import init_r_alt_auth  # Load R test functions
     
 After setup, use in R cells:
     rprint(x)      - Print any object cleanly
@@ -447,6 +450,543 @@ class PATManager:
             result['reason'] = f'{remaining} remaining, no refresh needed'
         
         return result
+
+
+# =============================================================================
+# Alternative Authentication Methods
+# =============================================================================
+
+class KeyPairAuth:
+    """
+    Helper for Key Pair (JWT) authentication with Snowflake ADBC.
+    
+    Key pair authentication uses RSA keys instead of passwords/tokens.
+    The private key must be registered with the Snowflake user.
+    
+    ADBC auth_type: 'auth_jwt'
+    
+    Example:
+        >>> from r_helpers import KeyPairAuth
+        >>> kp_auth = KeyPairAuth()
+        >>> kp_auth.generate_key_pair()  # Or load existing
+        >>> kp_auth.configure_for_adbc()
+    """
+    
+    def __init__(self):
+        self._private_key_path: Optional[str] = None
+        self._public_key_path: Optional[str] = None
+        self._private_key_pem: Optional[str] = None
+        self._passphrase: Optional[str] = None
+    
+    def generate_key_pair(
+        self,
+        key_size: int = 2048,
+        output_dir: str = "/tmp",
+        passphrase: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Generate a new RSA key pair for Snowflake authentication.
+        
+        Args:
+            key_size: RSA key size in bits (default: 2048)
+            output_dir: Directory to save keys
+            passphrase: Optional passphrase to encrypt private key
+        
+        Returns:
+            Dict with key paths and public key for registration
+        """
+        result = {
+            'success': False,
+            'private_key_path': None,
+            'public_key_path': None,
+            'public_key_for_snowflake': None,
+            'error': None
+        }
+        
+        try:
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.primitives.asymmetric import rsa
+            from cryptography.hazmat.backends import default_backend
+            
+            # Generate private key
+            private_key = rsa.generate_private_key(
+                public_exponent=65537,
+                key_size=key_size,
+                backend=default_backend()
+            )
+            
+            # Determine encryption
+            if passphrase:
+                encryption = serialization.BestAvailableEncryption(passphrase.encode())
+                self._passphrase = passphrase
+            else:
+                encryption = serialization.NoEncryption()
+            
+            # Serialize private key
+            private_pem = private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=encryption
+            )
+            
+            # Serialize public key
+            public_key = private_key.public_key()
+            public_pem = public_key.public_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PublicFormat.SubjectPublicKeyInfo
+            )
+            
+            # Save keys
+            private_path = f"{output_dir}/snowflake_rsa_key.p8"
+            public_path = f"{output_dir}/snowflake_rsa_key.pub"
+            
+            with open(private_path, 'wb') as f:
+                f.write(private_pem)
+            os.chmod(private_path, 0o600)  # Restrict permissions
+            
+            with open(public_path, 'wb') as f:
+                f.write(public_pem)
+            
+            self._private_key_path = private_path
+            self._public_key_path = public_path
+            self._private_key_pem = private_pem.decode()
+            
+            # Format public key for Snowflake (remove headers/footers, join lines)
+            public_key_lines = public_pem.decode().strip().split('\n')
+            public_key_for_sf = ''.join(public_key_lines[1:-1])
+            
+            result['success'] = True
+            result['private_key_path'] = private_path
+            result['public_key_path'] = public_path
+            result['public_key_for_snowflake'] = public_key_for_sf
+            
+        except ImportError:
+            result['error'] = "cryptography package not installed. Run: pip install cryptography"
+        except Exception as e:
+            result['error'] = str(e)
+        
+        return result
+    
+    def load_private_key(
+        self,
+        key_path: str,
+        passphrase: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Load an existing private key file.
+        
+        Args:
+            key_path: Path to private key file (.p8 or .pem)
+            passphrase: Passphrase if key is encrypted
+        
+        Returns:
+            Dict with load status
+        """
+        result = {'success': False, 'error': None}
+        
+        try:
+            with open(key_path, 'rb') as f:
+                private_key_data = f.read()
+            
+            # Verify it's a valid key
+            from cryptography.hazmat.primitives import serialization
+            from cryptography.hazmat.backends import default_backend
+            
+            password = passphrase.encode() if passphrase else None
+            serialization.load_pem_private_key(
+                private_key_data,
+                password=password,
+                backend=default_backend()
+            )
+            
+            self._private_key_path = key_path
+            self._private_key_pem = private_key_data.decode()
+            self._passphrase = passphrase
+            result['success'] = True
+            
+        except FileNotFoundError:
+            result['error'] = f"Key file not found: {key_path}"
+        except Exception as e:
+            result['error'] = f"Failed to load key: {e}"
+        
+        return result
+    
+    def register_public_key_sql(self, public_key: str, user: Optional[str] = None) -> str:
+        """
+        Generate SQL to register public key with Snowflake user.
+        
+        Args:
+            public_key: Public key string (from generate_key_pair)
+            user: Username (default: current user from env)
+        
+        Returns:
+            SQL statement to execute
+        """
+        user = user or os.environ.get('SNOWFLAKE_USER', 'CURRENT_USER()')
+        return f"ALTER USER {user} SET RSA_PUBLIC_KEY = '{public_key}';"
+    
+    def configure_for_adbc(self) -> Dict[str, Any]:
+        """
+        Configure environment variables for ADBC key pair auth.
+        
+        Returns:
+            Dict with configuration status
+        """
+        result = {'success': False, 'auth_type': 'auth_jwt', 'error': None}
+        
+        if not self._private_key_path:
+            result['error'] = "No private key loaded. Call generate_key_pair() or load_private_key() first."
+            return result
+        
+        # Set environment variables for ADBC
+        os.environ['SNOWFLAKE_AUTH_TYPE'] = 'auth_jwt'
+        os.environ['SNOWFLAKE_PRIVATE_KEY_PATH'] = self._private_key_path
+        if self._passphrase:
+            os.environ['SNOWFLAKE_PRIVATE_KEY_PASSPHRASE'] = self._passphrase
+        
+        result['success'] = True
+        result['private_key_path'] = self._private_key_path
+        result['has_passphrase'] = self._passphrase is not None
+        
+        return result
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current key pair auth configuration status."""
+        return {
+            'private_key_loaded': self._private_key_path is not None,
+            'private_key_path': self._private_key_path,
+            'has_passphrase': self._passphrase is not None,
+            'env_auth_type': os.environ.get('SNOWFLAKE_AUTH_TYPE'),
+            'env_key_path': os.environ.get('SNOWFLAKE_PRIVATE_KEY_PATH')
+        }
+
+
+class OAuthAuth:
+    """
+    Helper for OAuth authentication with Snowflake ADBC.
+    
+    OAuth authentication requires a security integration configured
+    in Snowflake with an external identity provider.
+    
+    ADBC auth_type: 'auth_oauth'
+    
+    Example:
+        >>> from r_helpers import OAuthAuth
+        >>> oauth = OAuthAuth()
+        >>> oauth.set_token(access_token)
+        >>> oauth.configure_for_adbc()
+    """
+    
+    def __init__(self):
+        self._access_token: Optional[str] = None
+        self._token_type: str = "Bearer"
+    
+    def set_token(self, access_token: str, token_type: str = "Bearer") -> None:
+        """
+        Set the OAuth access token.
+        
+        Args:
+            access_token: OAuth access token from IdP
+            token_type: Token type (default: Bearer)
+        """
+        self._access_token = access_token
+        self._token_type = token_type
+    
+    def load_spcs_token(self) -> Dict[str, Any]:
+        """
+        Attempt to load the SPCS OAuth token (for testing - known to not work).
+        
+        Returns:
+            Dict with token load status
+        """
+        result = {'success': False, 'error': None, 'warning': None}
+        
+        token_path = '/snowflake/session/token'
+        
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, 'r') as f:
+                    self._access_token = f.read().strip()
+                result['success'] = True
+                result['warning'] = (
+                    "SPCS token loaded, but this is known to NOT work for ADBC. "
+                    "The token is restricted to specific Snowflake connectors."
+                )
+            except Exception as e:
+                result['error'] = f"Failed to read token: {e}"
+        else:
+            result['error'] = f"Token file not found: {token_path}"
+        
+        return result
+    
+    def configure_for_adbc(self) -> Dict[str, Any]:
+        """
+        Configure environment variables for ADBC OAuth auth.
+        
+        Returns:
+            Dict with configuration status
+        """
+        result = {'success': False, 'auth_type': 'auth_oauth', 'error': None}
+        
+        if not self._access_token:
+            result['error'] = "No access token set. Call set_token() first."
+            return result
+        
+        os.environ['SNOWFLAKE_AUTH_TYPE'] = 'auth_oauth'
+        os.environ['SNOWFLAKE_OAUTH_TOKEN'] = self._access_token
+        
+        result['success'] = True
+        result['token_length'] = len(self._access_token)
+        
+        return result
+    
+    def get_status(self) -> Dict[str, Any]:
+        """Get current OAuth auth configuration status."""
+        return {
+            'token_set': self._access_token is not None,
+            'token_length': len(self._access_token) if self._access_token else 0,
+            'token_type': self._token_type,
+            'env_auth_type': os.environ.get('SNOWFLAKE_AUTH_TYPE'),
+            'env_token_set': 'SNOWFLAKE_OAUTH_TOKEN' in os.environ
+        }
+
+
+# R code for alternative authentication connections
+R_ALT_AUTH_CODE = '''
+# =============================================================================
+# Alternative Authentication Methods for ADBC
+# =============================================================================
+
+#' Test Key Pair (JWT) authentication
+#' 
+#' @param private_key_path Path to private key file
+#' @param passphrase Optional passphrase for encrypted key
+#' @return Connection object or error
+test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
+  account     <- Sys.getenv("SNOWFLAKE_ACCOUNT")
+  user        <- Sys.getenv("SNOWFLAKE_USER")
+  database    <- Sys.getenv("SNOWFLAKE_DATABASE")
+  schema      <- Sys.getenv("SNOWFLAKE_SCHEMA")
+  warehouse   <- Sys.getenv("SNOWFLAKE_WAREHOUSE")
+  role        <- Sys.getenv("SNOWFLAKE_ROLE")
+  public_host <- Sys.getenv("SNOWFLAKE_PUBLIC_HOST")
+  
+  # Get private key path from env if not provided
+  if (is.null(private_key_path)) {
+    private_key_path <- Sys.getenv("SNOWFLAKE_PRIVATE_KEY_PATH")
+  }
+  if (is.null(passphrase)) {
+    passphrase <- Sys.getenv("SNOWFLAKE_PRIVATE_KEY_PASSPHRASE", unset = NA)
+    if (is.na(passphrase)) passphrase <- NULL
+  }
+  
+  if (identical(private_key_path, "")) {
+    stop("Private key path not set. Set SNOWFLAKE_PRIVATE_KEY_PATH or pass as argument.")
+  }
+  
+  message("Testing Key Pair (JWT) authentication...")
+  message("  Account: ", account)
+  message("  User: ", user)
+  message("  Key path: ", private_key_path)
+  
+  tryCatch({
+    # Build connection arguments
+    args <- list(
+      adbcsnowflake::adbcsnowflake(),
+      username                          = user,
+      `adbc.snowflake.sql.account`      = account,
+      `adbc.snowflake.sql.uri.host`     = public_host,
+      `adbc.snowflake.sql.db`           = database,
+      `adbc.snowflake.sql.schema`       = schema,
+      `adbc.snowflake.sql.warehouse`    = warehouse,
+      `adbc.snowflake.sql.role`         = role,
+      `adbc.snowflake.sql.auth_type`    = "auth_jwt",
+      `adbc.snowflake.sql.client_option.jwt_private_key_file` = private_key_path
+    )
+    
+    # Add passphrase if provided
+    if (!is.null(passphrase)) {
+      args[["adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password"]] <- passphrase
+    }
+    
+    db <- do.call(adbc_database_init, args)
+    con <- adbc_connection_init(db)
+    
+    # Test query
+    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'KEY_PAIR' AS AUTH_METHOD")
+    message("✓ Key Pair authentication SUCCESSFUL")
+    rprint(result)
+    
+    # Clean up test connection
+    adbc_connection_release(con)
+    adbc_database_release(db)
+    
+    return(list(success = TRUE, method = "auth_jwt"))
+  }, error = function(e) {
+    message("✗ Key Pair authentication FAILED: ", e$message)
+    return(list(success = FALSE, method = "auth_jwt", error = e$message))
+  })
+}
+
+#' Test OAuth authentication
+#' 
+#' @param token OAuth access token
+#' @return Connection object or error
+test_oauth_auth <- function(token = NULL) {
+  account     <- Sys.getenv("SNOWFLAKE_ACCOUNT")
+  user        <- Sys.getenv("SNOWFLAKE_USER")
+  database    <- Sys.getenv("SNOWFLAKE_DATABASE")
+  schema      <- Sys.getenv("SNOWFLAKE_SCHEMA")
+  warehouse   <- Sys.getenv("SNOWFLAKE_WAREHOUSE")
+  role        <- Sys.getenv("SNOWFLAKE_ROLE")
+  public_host <- Sys.getenv("SNOWFLAKE_PUBLIC_HOST")
+  
+  if (is.null(token)) {
+    token <- Sys.getenv("SNOWFLAKE_OAUTH_TOKEN")
+  }
+  
+  if (identical(token, "")) {
+    stop("OAuth token not set. Set SNOWFLAKE_OAUTH_TOKEN or pass as argument.")
+  }
+  
+  message("Testing OAuth authentication...")
+  message("  Account: ", account)
+  message("  User: ", user)
+  message("  Token length: ", nchar(token))
+  
+  tryCatch({
+    db <- adbc_database_init(
+      adbcsnowflake::adbcsnowflake(),
+      username                          = user,
+      `adbc.snowflake.sql.account`      = account,
+      `adbc.snowflake.sql.uri.host`     = public_host,
+      `adbc.snowflake.sql.db`           = database,
+      `adbc.snowflake.sql.schema`       = schema,
+      `adbc.snowflake.sql.warehouse`    = warehouse,
+      `adbc.snowflake.sql.role`         = role,
+      `adbc.snowflake.sql.auth_type`    = "auth_oauth",
+      `adbc.snowflake.sql.client_option.auth_token` = token
+    )
+    con <- adbc_connection_init(db)
+    
+    # Test query
+    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'OAUTH' AS AUTH_METHOD")
+    message("✓ OAuth authentication SUCCESSFUL")
+    rprint(result)
+    
+    # Clean up test connection
+    adbc_connection_release(con)
+    adbc_database_release(db)
+    
+    return(list(success = TRUE, method = "auth_oauth"))
+  }, error = function(e) {
+    message("✗ OAuth authentication FAILED: ", e$message)
+    return(list(success = FALSE, method = "auth_oauth", error = e$message))
+  })
+}
+
+#' Test SPCS OAuth token (expected to fail)
+#' 
+#' @return Connection result
+test_spcs_token <- function() {
+  token_path <- "/snowflake/session/token"
+  
+  if (!file.exists(token_path)) {
+    message("✗ SPCS token file not found: ", token_path)
+    return(list(success = FALSE, method = "spcs_oauth", error = "Token file not found"))
+  }
+  
+  token <- readLines(token_path, warn = FALSE)
+  token <- paste(token, collapse = "")
+  
+  message("SPCS token loaded (", nchar(token), " chars)")
+  message("Note: This is expected to FAIL - SPCS tokens are restricted to specific connectors")
+  
+  test_oauth_auth(token)
+}
+
+#' Test username/password authentication (expected to fail in SPCS)
+#' 
+#' @param password Password (if not using env var)
+#' @return Connection result
+test_password_auth <- function(password = NULL) {
+  account     <- Sys.getenv("SNOWFLAKE_ACCOUNT")
+  user        <- Sys.getenv("SNOWFLAKE_USER")
+  database    <- Sys.getenv("SNOWFLAKE_DATABASE")
+  schema      <- Sys.getenv("SNOWFLAKE_SCHEMA")
+  warehouse   <- Sys.getenv("SNOWFLAKE_WAREHOUSE")
+  role        <- Sys.getenv("SNOWFLAKE_ROLE")
+  public_host <- Sys.getenv("SNOWFLAKE_PUBLIC_HOST")
+  
+  if (is.null(password)) {
+    password <- Sys.getenv("SNOWFLAKE_PASSWORD")
+  }
+  
+  if (identical(password, "")) {
+    stop("Password not set. Set SNOWFLAKE_PASSWORD or pass as argument.")
+  }
+  
+  message("Testing Username/Password authentication...")
+  message("  Account: ", account)
+  message("  User: ", user)
+  message("Note: This is expected to FAIL in SPCS - OAuth is enforced")
+  
+  tryCatch({
+    db <- adbc_database_init(
+      adbcsnowflake::adbcsnowflake(),
+      username                          = user,
+      password                          = password,
+      `adbc.snowflake.sql.account`      = account,
+      `adbc.snowflake.sql.uri.host`     = public_host,
+      `adbc.snowflake.sql.db`           = database,
+      `adbc.snowflake.sql.schema`       = schema,
+      `adbc.snowflake.sql.warehouse`    = warehouse,
+      `adbc.snowflake.sql.role`         = role,
+      `adbc.snowflake.sql.auth_type`    = "auth_snowflake"
+    )
+    con <- adbc_connection_init(db)
+    
+    result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'PASSWORD' AS AUTH_METHOD")
+    message("✓ Password authentication SUCCESSFUL (unexpected!)")
+    rprint(result)
+    
+    adbc_connection_release(con)
+    adbc_database_release(db)
+    
+    return(list(success = TRUE, method = "auth_snowflake"))
+  }, error = function(e) {
+    message("✗ Password authentication FAILED (expected): ", e$message)
+    return(list(success = FALSE, method = "auth_snowflake", error = e$message))
+  })
+}
+
+message("Alternative auth test functions loaded:")
+message("  - test_keypair_auth()  : Test JWT/Key Pair authentication")
+message("  - test_oauth_auth()    : Test OAuth with external token")
+message("  - test_spcs_token()    : Test SPCS OAuth token (expected to fail)")
+message("  - test_password_auth() : Test username/password (expected to fail)")
+'''
+
+
+def init_r_alt_auth() -> Tuple[bool, str]:
+    """
+    Load R functions for testing alternative authentication methods.
+    
+    Functions loaded:
+    - test_keypair_auth(): Test JWT/Key Pair authentication
+    - test_oauth_auth(): Test OAuth with external token
+    - test_spcs_token(): Test SPCS token (expected to fail)
+    - test_password_auth(): Test password auth (expected to fail)
+    
+    Returns:
+        Tuple of (success, message)
+    """
+    try:
+        import rpy2.robjects as ro
+        ro.r(R_ALT_AUTH_CODE)
+        return True, "Alternative auth test functions loaded"
+    except Exception as e:
+        return False, f"Failed to load alt auth functions: {e}"
 
 
 def create_pat(
