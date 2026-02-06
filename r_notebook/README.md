@@ -1,3 +1,4 @@
+
 # R Integration for Snowflake Workspace Notebooks
 
 This folder contains everything needed to run R within Snowflake Workspace Notebooks using rpy2.
@@ -82,12 +83,19 @@ cran_packages:
 - `-i` flag to pass Python variables to R
 - `-o` flag to export R variables to Python
 
-### Snowflake Connectivity (with `--adbc`)
-- Direct R-to-Snowflake queries via ADBC
-- Authentication options:
-  - **PAT (Programmatic Access Token)** - Recommended, can be created programmatically
-  - **Key Pair (JWT)** - Alternative, requires pre-registering public key
+### Snowflake Connectivity
+
+**Option 1: ADBC** (with `--adbc` flag)
+- Direct R-to-Snowflake queries via ADBC driver
+- Authentication: PAT (recommended) or Key Pair
 - Arrow-based data transfer for performance
+- Best for: Production R pipelines, large datasets
+
+**Option 2: Reticulate + Snowpark** (no extra setup)
+- Access Python Snowpark session from R via reticulate
+- Uses notebook's built-in authentication (no PAT needed)
+- Data path: Snowflake → Snowpark → pandas → R
+- Best for: Quick analysis, prototyping, interactive work
 
 ### Helper Module (`r_helpers.py`)
 - `setup_r_environment()` - Configure R in one call (also loads output helpers)
