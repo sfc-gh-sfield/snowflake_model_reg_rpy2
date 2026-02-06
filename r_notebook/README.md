@@ -174,6 +174,16 @@ close_snowflake_connection()  # Clean up
 - Network access to conda-forge and CRAN (for package installation)
 - For ADBC: Permissions to create PAT tokens
 
+### Minimum Package Versions
+
+| Package | Min Version | Reason |
+|---------|-------------|--------|
+| `r-reticulate` | >= 1.25 | Required for rpy2 compatibility (fixes segfault) |
+| `r-base` | >= 4.0 | Recommended for modern R features |
+| `rpy2` (Python) | >= 3.5 | Stable R-Python bridge |
+
+These minimums are enforced in the default `r_packages.yaml`. If you see warnings about reticulate/rpy2 compatibility, ensure `r-reticulate >= 1.25` is installed.
+
 ## Limitations
 
 - No native R kernel (use `%%R` magic instead)
@@ -191,6 +201,7 @@ close_snowflake_connection()  # Clean up
 | Disk space error | Free up space (minimum 2GB required) |
 | R output has extra line breaks | Use `rprint()`, `rview()`, or `rglimpse()` |
 | `rprint` not found | Re-run `setup_r_environment()` or `init_r_output_helpers()` |
+| reticulate/rpy2 segfault warning | Safe to ignore if reticulate >= 1.25 (default) |
 
 ### Run Diagnostics
 ```python

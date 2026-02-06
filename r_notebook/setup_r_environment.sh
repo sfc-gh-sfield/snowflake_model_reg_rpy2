@@ -23,6 +23,11 @@
 #   conda_packages: Packages from conda-forge (supports version pinning: =, >=, <=)
 #   cran_packages:  Packages from CRAN (supports exact version pinning with ==)
 #
+# Minimum Version Requirements:
+#   - r-reticulate >= 1.25  Required for rpy2 compatibility (fixes segfault issue)
+#   - r-base >= 4.0         Recommended for modern R features
+#   - rpy2 (Python) >= 3.5  Stable R-Python bridge
+#
 # Examples:
 #   ./setup_r_environment.sh                    # Basic R installation
 #   ./setup_r_environment.sh --adbc             # R + ADBC driver

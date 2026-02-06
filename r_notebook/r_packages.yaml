@@ -37,7 +37,7 @@ r_version: ""  # Leave empty for latest
 conda_packages:
   - r-tidyverse      # Data manipulation and visualization (dplyr, ggplot2, tidyr, etc.)
   - r-lazyeval       # Required for some tidyverse operations
-  - r-reticulate       # R interface to Python (useful for advanced interop)
+  - r-reticulate>=1.25  # R-Python interop (>=1.25 required for rpy2 compatibility)
   # Examples with version pinning:
   # - r-dplyr=1.1.4        # Pin to exact version
   # - r-ggplot2>=3.4.0     # Require minimum version
@@ -62,6 +62,22 @@ cran_packages: []
   # - forecast==8.21     # Exact version (will install remotes if needed)
   # - shiny              # Web applications
   # - caret              # Machine learning
+
+# =============================================================================
+# MINIMUM VERSION REQUIREMENTS
+# =============================================================================
+# The following minimum versions are required for full compatibility:
+#
+# | Package       | Min Version | Reason                                    |
+# |---------------|-------------|-------------------------------------------|
+# | r-reticulate  | >= 1.25     | Fix for rpy2 segfault (PR #1188)          |
+# | r-base        | >= 4.0      | Modern R features                          |
+# | rpy2 (Python) | >= 3.5      | Stable R-Python bridge                     |
+#
+# If you see warnings like:
+#   "The R package 'reticulate' only fixed recently an issue that caused 
+#    a segfault when used with rpy2"
+# Ensure r-reticulate >= 1.25 is installed.
 
 # =============================================================================
 # NOTES
