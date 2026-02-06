@@ -35,9 +35,18 @@ bash setup_r_environment.sh --adbc
 # With verbose logging
 bash setup_r_environment.sh --adbc --verbose
 
+# Force reinstall everything (skip "already installed" checks)
+bash setup_r_environment.sh --adbc --force
+
 # View all options
 bash setup_r_environment.sh --help
 ```
+
+### Re-runnability
+
+The script is **idempotent** - it checks what's already installed and skips those steps:
+- Re-running after adding packages to `r_packages.yaml` installs only the new packages
+- Use `--force` to reinstall everything regardless of current state
 
 The script includes:
 - Pre-flight checks (disk space, network)

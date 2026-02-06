@@ -16,7 +16,12 @@
 #   --log FILE    Write output to log file (default: setup_r.log)
 #   --no-log      Disable logging to file
 #   --verbose     Show detailed output
+#   --force       Force reinstallation (skip "already installed" checks)
 #   --help        Show this help message
+#
+# Re-runnability:
+#   This script is idempotent - it checks what's already installed and skips
+#   those steps. Use --force to reinstall everything regardless.
 #
 # Configuration (r_packages.yaml):
 #   r_version:      R version to install (empty for latest)
@@ -47,6 +52,7 @@ LOG_FILE="${SCRIPT_DIR}/setup_r.log"
 INSTALL_ADBC=false
 ENABLE_LOGGING=true
 VERBOSE=false
+FORCE_REINSTALL=false
 MICROMAMBA_ROOT="${HOME}/micromamba"
 ENV_NAME="r_env"
 CHANNEL="conda-forge"
@@ -191,6 +197,91 @@ retry_command() {
 }
 
 # =============================================================================
+# Installation State Checks
+# =============================================================================
+
+# Check if a conda package is installed in the environment
+# Usage: is_conda_pkg_installed "r-tidyverse" -> returns 0 if installed
+is_conda_pkg_installed() {
+    local pkg_name="$1"
+    local env_name="${2:-${ENV_NAME}}"
+    
+    # Strip version specifier for checking
+    local base_name
+    base_name=$(echo "${pkg_name}" | sed -E 's/[<>=].*//')
+    
+    if micromamba list -n "${env_name}" 2>/dev/null | grep -q "^${base_name} "; then
+        return 0
+    fi
+    return 1
+}
+
+# Get list of conda packages that need to be installed
+# Returns space-separated list of packages not yet installed
+get_missing_conda_packages() {
+    local env_name="$1"
+    shift
+    local packages=("$@")
+    local missing=()
+    
+    for pkg in "${packages[@]}"; do
+        if ! is_conda_pkg_installed "${pkg}" "${env_name}"; then
+            missing+=("${pkg}")
+        else
+            log_debug "    Package already installed: ${pkg}"
+        fi
+    done
+    
+    echo "${missing[*]}"
+}
+
+# Check if R environment is set up correctly
+is_r_environment_ready() {
+    local env_name="${1:-${ENV_NAME}}"
+    
+    # Check if environment exists
+    if ! micromamba env list | awk '{print $1}' | grep -qx "${env_name}"; then
+        return 1
+    fi
+    
+    # Check if R binary exists
+    local prefix
+    prefix="$(micromamba env list | awk -v name="${env_name}" '$1 == name {print $NF}')"
+    if [ ! -x "${prefix}/bin/R" ]; then
+        return 1
+    fi
+    
+    return 0
+}
+
+# Check if Go is installed in the environment
+is_go_installed() {
+    local env_name="${1:-${ENV_NAME}}"
+    local prefix
+    prefix="$(micromamba env list | awk -v name="${env_name}" '$1 == name {print $NF}')"
+    
+    if [ -x "${prefix}/bin/go" ]; then
+        return 0
+    fi
+    return 1
+}
+
+# Check if ADBC R packages are installed
+is_adbc_installed() {
+    local prefix="$1"
+    
+    "${prefix}/bin/R" --vanilla --slave --quiet -e "
+        if (requireNamespace('adbcsnowflake', quietly=TRUE) && 
+            requireNamespace('adbcdrivermanager', quietly=TRUE)) {
+            quit(status=0)
+        } else {
+            quit(status=1)
+        }
+    " 2>/dev/null
+    return $?
+}
+
+# =============================================================================
 # Parse Command Line Arguments
 # =============================================================================
 
@@ -207,7 +298,12 @@ Options:
   --log FILE    Write output to log file (default: setup_r.log)
   --no-log      Disable logging to file
   --verbose     Show detailed output
+  --force       Force reinstallation (skip "already installed" checks)
   --help        Show this help message
+
+Re-runnability:
+  This script is idempotent - it checks what's already installed and skips
+  those steps. Use --force to reinstall everything regardless.
 
 The package configuration file (r_packages.yaml) supports:
 
@@ -256,6 +352,10 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=true
             shift
             ;;
+        --force)
+            FORCE_REINSTALL=true
+            shift
+            ;;
         --help|-h)
             show_help
             exit 0
@@ -298,6 +398,7 @@ main() {
     log_info "  Package config file: ${CONFIG_FILE}"
     log_info "  Install ADBC:        ${INSTALL_ADBC}"
     log_info "  Environment name:    ${ENV_NAME}"
+    log_info "  Force reinstall:     ${FORCE_REINSTALL}"
     log_info "  Log file:            ${LOG_FILE:-<disabled>}"
     echo ""
     
@@ -354,7 +455,9 @@ PYEOF
     
     log_info "Step 1: Installing micromamba..."
     
-    if [ ! -x "${MICROMAMBA_ROOT}/bin/micromamba" ]; then
+    if [ "${FORCE_REINSTALL}" = false ] && [ -x "${MICROMAMBA_ROOT}/bin/micromamba" ]; then
+        log_info "  ✓ micromamba already installed (skipping)"
+    else
         log_info "  Downloading micromamba..."
         mkdir -p "${MICROMAMBA_ROOT}/bin"
         
@@ -368,8 +471,6 @@ PYEOF
         rmdir bin 2>/dev/null || true
         
         log_info "  micromamba installed at ${MICROMAMBA_ROOT}/bin/micromamba"
-    else
-        log_info "  micromamba already installed"
     fi
     
     export PATH="${MICROMAMBA_ROOT}/bin:${PATH}"
@@ -417,18 +518,37 @@ PYEOF
         exit 1
     fi
     
-    log_debug "  Final package list: ${INSTALL_PACKAGES[*]}"
+    log_debug "  Requested packages: ${INSTALL_PACKAGES[*]}"
     
-    if ! micromamba env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
+    # Check if environment exists and what packages need to be installed
+    ENV_EXISTS=false
+    if micromamba env list | awk '{print $1}' | grep -qx "${ENV_NAME}"; then
+        ENV_EXISTS=true
+    fi
+    
+    if [ "${ENV_EXISTS}" = true ] && [ "${FORCE_REINSTALL}" = false ]; then
+        # Environment exists - check which packages are missing
+        log_info "  Checking installed packages..."
+        MISSING_PACKAGES=$(get_missing_conda_packages "${ENV_NAME}" "${INSTALL_PACKAGES[@]}")
+        
+        if [ -z "${MISSING_PACKAGES}" ]; then
+            log_info "  ✓ All conda packages already installed (skipping)"
+        else
+            log_info "  Installing missing packages: ${MISSING_PACKAGES}"
+            retry_command \
+                "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' ${MISSING_PACKAGES}" \
+                "Install missing packages"
+        fi
+    elif [ "${ENV_EXISTS}" = true ] && [ "${FORCE_REINSTALL}" = true ]; then
+        log_info "  Environment exists, force reinstalling packages..."
+        retry_command \
+            "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' ${INSTALL_PACKAGES[*]}" \
+            "Update R environment"
+    else
         log_info "  Creating environment '${ENV_NAME}'..."
         retry_command \
             "micromamba create -y -n '${ENV_NAME}' -c '${CHANNEL}' ${INSTALL_PACKAGES[*]}" \
             "Create R environment"
-    else
-        log_info "  Environment '${ENV_NAME}' exists, updating packages..."
-        retry_command \
-            "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' ${INSTALL_PACKAGES[*]}" \
-            "Update R environment"
     fi
     
     # Resolve environment prefix
@@ -451,6 +571,7 @@ PYEOF
     if [ -d "${LIBDIR}" ]; then
         cd "${LIBDIR}"
         
+        SYMLINKS_CREATED=0
         fix_symlink() {
             local base="$1"
             if [ ! -e "lib${base}.so" ]; then
@@ -459,13 +580,19 @@ PYEOF
                 if [ -n "${target}" ]; then
                     log_debug "  Creating symlink: lib${base}.so -> ${target}"
                     ln -s "${target}" "lib${base}.so"
+                    ((SYMLINKS_CREATED++)) || true
                 fi
             fi
         }
         
         fix_symlink "z"
         fix_symlink "lzma"
-        log_info "  Symlinks configured"
+        
+        if [ ${SYMLINKS_CREATED} -eq 0 ]; then
+            log_info "  ✓ Symlinks already configured"
+        else
+            log_info "  Created ${SYMLINKS_CREATED} symlink(s)"
+        fi
     else
         log_warn "  lib directory not found, skipping symlink fix"
     fi
@@ -558,29 +685,42 @@ REOF
         echo ""
         log_info "Step 6: Installing ADBC Snowflake driver..."
         
-        # 6a. Install Go
-        log_info "  Installing Go compiler..."
-        retry_command \
-            "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' go" \
-            "Install Go"
-        
-        GO_BIN="${ENV_PREFIX}/bin/go"
-        if [ ! -x "${GO_BIN}" ]; then
-            log_error "Go installation failed"
-            exit 1
-        fi
-        log_info "  Go installed at: ${GO_BIN}"
-        
-        # 6b. Install libadbc-driver-snowflake
-        log_info "  Installing ADBC C driver..."
-        retry_command \
-            "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' libadbc-driver-snowflake" \
-            "Install ADBC C driver"
-        
-        # 6c. Install R packages for ADBC
-        log_info "  Installing R ADBC packages..."
-        
-        "${ENV_PREFIX}/bin/R" --vanilla --quiet << REOF
+        # Check if ADBC is already fully installed
+        if [ "${FORCE_REINSTALL}" = false ] && is_adbc_installed "${ENV_PREFIX}"; then
+            log_info "  ✓ ADBC packages already installed (skipping)"
+            log_info "    Use --force to reinstall"
+        else
+            # 6a. Install Go
+            if [ "${FORCE_REINSTALL}" = false ] && is_go_installed "${ENV_NAME}"; then
+                log_info "  ✓ Go compiler already installed"
+            else
+                log_info "  Installing Go compiler..."
+                retry_command \
+                    "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' go" \
+                    "Install Go"
+            fi
+            
+            GO_BIN="${ENV_PREFIX}/bin/go"
+            if [ ! -x "${GO_BIN}" ]; then
+                log_error "Go installation failed"
+                exit 1
+            fi
+            log_debug "  Go binary: ${GO_BIN}"
+            
+            # 6b. Install libadbc-driver-snowflake
+            if [ "${FORCE_REINSTALL}" = false ] && is_conda_pkg_installed "libadbc-driver-snowflake" "${ENV_NAME}"; then
+                log_info "  ✓ ADBC C driver already installed"
+            else
+                log_info "  Installing ADBC C driver..."
+                retry_command \
+                    "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' libadbc-driver-snowflake" \
+                    "Install ADBC C driver"
+            fi
+            
+            # 6c. Install R packages for ADBC
+            log_info "  Installing R ADBC packages..."
+            
+            "${ENV_PREFIX}/bin/R" --vanilla --quiet << REOF
 # Set GO_BIN for adbcsnowflake compilation
 Sys.setenv(GO_BIN = "${GO_BIN}")
 cat("GO_BIN set to:", Sys.getenv("GO_BIN"), "\n")
@@ -589,23 +729,28 @@ cat("GO_BIN set to:", Sys.getenv("GO_BIN"), "\n")
 if (!requireNamespace("adbcdrivermanager", quietly = TRUE)) {
     message("Installing adbcdrivermanager from CRAN...")
     install.packages("adbcdrivermanager", repos = "https://cloud.r-project.org", quiet = TRUE)
+} else {
+    message("adbcdrivermanager already installed")
 }
 
 # Install adbcsnowflake from R-multiverse (requires Go)
 if (!requireNamespace("adbcsnowflake", quietly = TRUE)) {
     message("Installing adbcsnowflake from R-multiverse (this may take a few minutes)...")
     install.packages("adbcsnowflake", repos = "https://community.r-multiverse.org")
+} else {
+    message("adbcsnowflake already installed")
 }
 
 # Verify installation
 if (requireNamespace("adbcsnowflake", quietly = TRUE)) {
-    message("ADBC Snowflake driver installed successfully")
+    message("ADBC Snowflake driver ready")
 } else {
     stop("Failed to install adbcsnowflake")
 }
 REOF
-        
-        log_info "  ADBC installation complete"
+            
+            log_info "  ADBC installation complete"
+        fi
     else
         echo ""
         log_info "Step 6: Skipping ADBC installation (use --adbc flag to enable)"
@@ -629,6 +774,11 @@ REOF
         log_info "  Log file:    ${LOG_FILE}"
     fi
     
+    # Show R version
+    echo ""
+    log_info "Installed R version:"
+    "${ENV_PREFIX}/bin/R" --version 2>/dev/null | head -n1 || log_warn "  Could not determine R version"
+    
     echo ""
     echo "To use in your Notebook, run the configuration cell (Section 1.2)"
     echo "or use the helper module:"
@@ -646,6 +796,9 @@ REOF
         echo ""
     fi
     
+    echo ""
+    log_info "Tip: Re-run this script anytime to add new packages."
+    log_info "     Use --force to reinstall everything."
     log_info "Done."
 }
 
