@@ -218,8 +218,8 @@ rglimpse <- function(df) {
 #' @param ... Arguments to concatenate (like cat())
 #' @param sep Separator between arguments (default: "")
 #' @examples
-#' rcat("Value:", 42, "\n")
-#' rcat("Name: ", name, ", Age: ", age, "\n")
+#' rcat("Value:", 42)
+#' rcat("Name: ", name, ", Age: ", age)
 rcat <- function(..., sep = "") {
   args <- list(...)
   output <- paste(sapply(args, as.character), collapse = sep)
@@ -234,7 +234,7 @@ rcat <- function(..., sep = "") {
 #' rlines("Line 1", "Line 2", "Line 3")
 rlines <- function(...) {
   lines <- c(...)
-  writeLines(paste(lines, collapse = "\n"))
+  writeLines(paste(lines, collapse = "\\n"))
   invisible(NULL)
 }
 
@@ -836,7 +836,7 @@ test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
     stop("Private key file not found: ", private_key_path)
   }
   
-  private_key_content <- paste(readLines(private_key_path, warn = FALSE), collapse = "\n")
+  private_key_content <- paste(readLines(private_key_path, warn = FALSE), collapse = "\\n")
   
   message("Testing Key Pair (JWT) authentication...")
   message("  Account: ", account)
@@ -1578,13 +1578,13 @@ print_connection_status <- function() {
   
   # Build output string all at once
   output <- paste0(
-    "Connection Status:\n",
-    "  Connected:  ", status$connected, "\n",
-    "  Account:    ", status$account, "\n",
-    "  User:       ", status$user, "\n",
-    "  Database:   ", status$database, "\n",
-    "  PAT set:    ", status$pat_set, "\n",
-    "  con_exists: ", status$con_exists, "\n",
+    "Connection Status:\\n",
+    "  Connected:  ", status$connected, "\\n",
+    "  Account:    ", status$account, "\\n",
+    "  User:       ", status$user, "\\n",
+    "  Database:   ", status$database, "\\n",
+    "  PAT set:    ", status$pat_set, "\\n",
+    "  con_exists: ", status$con_exists, "\\n",
     "  db_exists:  ", status$db_exists
   )
   
