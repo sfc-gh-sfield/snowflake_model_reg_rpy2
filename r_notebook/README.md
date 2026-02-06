@@ -132,6 +132,30 @@ pat_mgr.create_pat(days_to_expiry=1)
 init_r_connection_management()
 ```
 
+### Data Visualization with ggplot2
+
+Create publication-quality charts using ggplot2 (included via tidyverse):
+
+```r
+%%R -w 700 -h 450
+library(ggplot2)
+
+p <- ggplot(data, aes(x = var1, y = var2)) +
+    geom_point() +
+    theme_minimal()
+    
+print(p)  # Required to render the plot
+```
+
+**Plot size parameters:**
+- `-w WIDTH` - Width in pixels (e.g., `-w 800`)
+- `-h HEIGHT` - Height in pixels (e.g., `-h 500`)
+
+**Saving plots:**
+```r
+ggsave("/tmp/my_plot.png", p, width = 8, height = 5, dpi = 150)
+```
+
 ### Output Helpers (R functions)
 
 Workspace Notebooks add extra line breaks to R output. Use these R functions for cleaner display:
