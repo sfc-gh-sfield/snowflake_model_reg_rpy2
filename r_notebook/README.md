@@ -16,6 +16,7 @@ This folder contains everything needed to run R within Snowflake Workspace Noteb
 | File | Description |
 |------|-------------|
 | `r_workspace_notebook.ipynb` | Main notebook with examples and documentation |
+| `r_forecasting_demo.ipynb` | **End-to-end forecasting demo** (train, register, inference) |
 | `setup_r_environment.sh` | Installation script for R environment |
 | `r_packages.yaml` | Package configuration (edit to customize) |
 | `r_helpers.py` | Helper module for PAT management and diagnostics |
@@ -231,6 +232,20 @@ close_snowflake_connection()  # Clean up
 | `rpy2` (Python) | >= 3.5 | Stable R-Python bridge |
 
 These minimums are enforced in the default `r_packages.yaml`. If you see warnings about reticulate/rpy2 compatibility, ensure `r-reticulate >= 1.25` is installed.
+
+## Forecasting Demo
+
+The `r_forecasting_demo.ipynb` notebook provides a complete end-to-end example:
+
+1. **Configure** - Set database, schema, warehouse (customizable at top)
+2. **Query Data** - TPC-H orders data from Snowflake
+3. **Train Model** - R `auto.arima()` for automatic ARIMA parameter selection
+4. **Register** - Log model to Snowflake Model Registry with rpy2 wrapper
+5. **Deploy** - Create SPCS service for inference
+6. **Predict** - Generate forecasts via the deployed model
+7. **Visualize** - Create ggplot2 charts of results
+
+This demo is designed for **R-preferring data scientists** who need to integrate with Snowflake's MLOps ecosystem.
 
 ## Limitations
 
