@@ -759,9 +759,15 @@ R_ALT_AUTH_CODE = '''
 
 #' Test Key Pair (JWT) authentication
 #' 
-#' @param private_key_path Path to private key file
+#' @param private_key_path Path to private key file (PKCS#8 .p8 format)
 #' @param passphrase Optional passphrase for encrypted key
 #' @return Connection object or error
+#' 
+#' Note: ADBC has two options for JWT auth:
+#'   - jwt_private_key: path to PKCS#1 format file ("RSA PRIVATE KEY")
+#'   - jwt_private_key_pkcs8_value: PKCS#8 key CONTENT (not path)
+#' 
+#' Since we generate PKCS#8 keys, we read the file and pass content directly.
 test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
   account     <- Sys.getenv("SNOWFLAKE_ACCOUNT")
   user        <- Sys.getenv("SNOWFLAKE_USER")
@@ -784,13 +790,22 @@ test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
     stop("Private key path not set. Set SNOWFLAKE_PRIVATE_KEY_PATH or pass as argument.")
   }
   
+  # Read the private key content
+  if (!file.exists(private_key_path)) {
+    stop("Private key file not found: ", private_key_path)
+  }
+  
+  private_key_content <- paste(readLines(private_key_path, warn = FALSE), collapse = "\n")
+  
   message("Testing Key Pair (JWT) authentication...")
   message("  Account: ", account)
   message("  User: ", user)
   message("  Key path: ", private_key_path)
+  message("  Key format: ", ifelse(grepl("BEGIN PRIVATE KEY", private_key_content), "PKCS#8", "PKCS#1"))
   
   tryCatch({
     # Build connection arguments
+    # For PKCS#8 keys, use jwt_private_key_pkcs8_value (content, not path)
     args <- list(
       adbcsnowflake::adbcsnowflake(),
       username                          = user,
@@ -801,10 +816,10 @@ test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
       `adbc.snowflake.sql.warehouse`    = warehouse,
       `adbc.snowflake.sql.role`         = role,
       `adbc.snowflake.sql.auth_type`    = "auth_jwt",
-      `adbc.snowflake.sql.client_option.jwt_private_key_file` = private_key_path
+      `adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_value` = private_key_content
     )
     
-    # Add passphrase if provided
+    # Add passphrase if provided (for encrypted keys)
     if (!is.null(passphrase)) {
       args[["adbc.snowflake.sql.client_option.jwt_private_key_pkcs8_password"]] <- passphrase
     }
