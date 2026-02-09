@@ -792,7 +792,7 @@ REOF
         if [ "${DUCKDB_INSTALLED}" = true ] && [ "${FORCE_REINSTALL}" = false ]; then
             log_info "    ✓ DuckDB R packages already installed (skipping)"
         else
-            run_with_retry \
+            retry_command \
                 "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' r-duckdb r-dbplyr" \
                 "Install DuckDB R packages"
         fi
