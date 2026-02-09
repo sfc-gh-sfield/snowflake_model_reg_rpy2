@@ -28,10 +28,21 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Configuration - values to replace
+# Database and warehouse
 DEV_DATABASE="SIMON"
 DEV_WAREHOUSE="SIMON_XS"
 PUBLIC_DATABASE="<YOUR_DATABASE>"
 PUBLIC_WAREHOUSE="<YOUR_WAREHOUSE>"
+
+# Account and user credentials (IMPORTANT: prevent credential leaks)
+DEV_ACCOUNT="ak32940"
+DEV_USER="SIMON"
+PUBLIC_ACCOUNT="<YOUR_ACCOUNT>"
+PUBLIC_USER="<YOUR_USER>"
+
+# Private key file references
+DEV_KEY_FILE="simon_rsa_key"
+PUBLIC_KEY_FILE="rsa_key"
 
 # Get script directory (source repo)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -109,24 +120,49 @@ echo -e "${YELLOW}Step 2: Replacing development values with placeholders...${NC}
 
 # Find and replace in all relevant files
 # Note: In JSON files (*.ipynb), quotes are escaped as \"
-find "$TARGET_DIR" -type f \( -name "*.ipynb" -o -name "*.py" -o -name "*.md" -o -name "*.yaml" -o -name "*.yml" \) | while read file; do
-    if grep -q "$DEV_DATABASE\|$DEV_WAREHOUSE" "$file" 2>/dev/null; then
+find "$TARGET_DIR" -type f \( -name "*.ipynb" -o -name "*.py" -o -name "*.md" -o -name "*.yaml" -o -name "*.yml" -o -name "*.sh" -o -name "*.R" -o -name "*.toml" \) | while read file; do
+    if grep -q "$DEV_DATABASE\|$DEV_WAREHOUSE\|$DEV_ACCOUNT\|$DEV_USER\|$DEV_KEY_FILE" "$file" 2>/dev/null; then
         echo "  Processing: $(basename "$file")"
         # Use sed to replace (works on macOS and Linux)
         if [[ "$OSTYPE" == "darwin"* ]]; then
             # macOS - handle both regular quotes and JSON-escaped quotes
-            # JSON escaped quotes: \"SIMON\" -> \"<YOUR_DATABASE>\"
+            
+            # Database and warehouse (JSON-escaped and regular quotes)
             sed -i '' "s/\\\\\"$DEV_DATABASE\\\\\"/\\\\\"$PUBLIC_DATABASE\\\\\"/g" "$file"
             sed -i '' "s/\\\\\"$DEV_WAREHOUSE\\\\\"/\\\\\"$PUBLIC_WAREHOUSE\\\\\"/g" "$file"
-            # Regular quotes: "SIMON" -> "<YOUR_DATABASE>"
             sed -i '' "s/\"$DEV_DATABASE\"/\"$PUBLIC_DATABASE\"/g" "$file"
             sed -i '' "s/\"$DEV_WAREHOUSE\"/\"$PUBLIC_WAREHOUSE\"/g" "$file"
+            
+            # Account identifier (with single quotes, double quotes, and JSON-escaped)
+            sed -i '' "s/'$DEV_ACCOUNT'/'$PUBLIC_ACCOUNT'/g" "$file"
+            sed -i '' "s/\\\\\"$DEV_ACCOUNT\\\\\"/\\\\\"$PUBLIC_ACCOUNT\\\\\"/g" "$file"
+            sed -i '' "s/\"$DEV_ACCOUNT\"/\"$PUBLIC_ACCOUNT\"/g" "$file"
+            
+            # User name - be careful to only replace when it's clearly the user
+            # Pattern: USER 'SIMON' or user='SIMON' or USER='SIMON'
+            sed -i '' "s/USER '$DEV_USER'/USER '$PUBLIC_USER'/gi" "$file"
+            sed -i '' "s/user='$DEV_USER'/user='$PUBLIC_USER'/gi" "$file"
+            sed -i '' "s/USER\\\\\"$DEV_USER\\\\\"/USER\\\\\"$PUBLIC_USER\\\\\"/gi" "$file"
+            
+            # Private key file references
+            sed -i '' "s/$DEV_KEY_FILE/$PUBLIC_KEY_FILE/g" "$file"
+            
         else
-            # Linux - handle both regular quotes and JSON-escaped quotes
+            # Linux - same replacements
             sed -i "s/\\\\\"$DEV_DATABASE\\\\\"/\\\\\"$PUBLIC_DATABASE\\\\\"/g" "$file"
             sed -i "s/\\\\\"$DEV_WAREHOUSE\\\\\"/\\\\\"$PUBLIC_WAREHOUSE\\\\\"/g" "$file"
             sed -i "s/\"$DEV_DATABASE\"/\"$PUBLIC_DATABASE\"/g" "$file"
             sed -i "s/\"$DEV_WAREHOUSE\"/\"$PUBLIC_WAREHOUSE\"/g" "$file"
+            
+            sed -i "s/'$DEV_ACCOUNT'/'$PUBLIC_ACCOUNT'/g" "$file"
+            sed -i "s/\\\\\"$DEV_ACCOUNT\\\\\"/\\\\\"$PUBLIC_ACCOUNT\\\\\"/g" "$file"
+            sed -i "s/\"$DEV_ACCOUNT\"/\"$PUBLIC_ACCOUNT\"/g" "$file"
+            
+            sed -i "s/USER '$DEV_USER'/USER '$PUBLIC_USER'/gi" "$file"
+            sed -i "s/user='$DEV_USER'/user='$PUBLIC_USER'/gi" "$file"
+            sed -i "s/USER\\\\\"$DEV_USER\\\\\"/USER\\\\\"$PUBLIC_USER\\\\\"/gi" "$file"
+            
+            sed -i "s/$DEV_KEY_FILE/$PUBLIC_KEY_FILE/g" "$file"
         fi
     fi
 done
