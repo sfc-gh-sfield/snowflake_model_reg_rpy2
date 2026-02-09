@@ -780,25 +780,26 @@ REOF
         echo ""
         log_info "Step 7: Installing DuckDB with Snowflake extension..."
         
-        # Install DuckDB R packages
-        log_info "  Installing DuckDB R packages..."
+        # Install DuckDB R packages via micromamba (much faster than compiling from source)
+        log_info "  Installing DuckDB R packages via micromamba..."
+        
+        # Check if already installed
+        DUCKDB_INSTALLED=false
+        if micromamba list -n "${ENV_NAME}" 2>/dev/null | grep -q "^r-duckdb "; then
+            DUCKDB_INSTALLED=true
+        fi
+        
+        if [ "${DUCKDB_INSTALLED}" = true ] && [ "${FORCE_REINSTALL}" = false ]; then
+            log_info "    ✓ DuckDB R packages already installed (skipping)"
+        else
+            run_with_retry \
+                "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' r-duckdb r-dbplyr" \
+                "Install DuckDB R packages"
+        fi
+        
+        # Verify installation
+        log_info "  Verifying DuckDB installation..."
         "${ENV_PREFIX}/bin/R" --vanilla --quiet << 'REOF'
-# Set library path
-lib_path <- Sys.getenv("R_LIBS_USER")
-if (lib_path == "" || !dir.exists(lib_path)) {
-    lib_path <- file.path(Sys.getenv("HOME"), ".local/share/mamba/envs/r_env/lib/R/library")
-}
-
-# Install DuckDB packages
-packages_needed <- c("DBI", "duckdb", "dbplyr")
-for (pkg in packages_needed) {
-    if (!requireNamespace(pkg, quietly = TRUE)) {
-        message(sprintf("Installing %s...", pkg))
-        install.packages(pkg, repos = "https://cloud.r-project.org/", lib = lib_path, quiet = TRUE)
-    }
-}
-
-# Verify installation
 suppressPackageStartupMessages({
     library(DBI)
     library(duckdb)
