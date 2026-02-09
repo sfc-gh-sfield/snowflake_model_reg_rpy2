@@ -113,7 +113,7 @@ ggplot2 integration with proper Notebook rendering:
 ┌─────────────────────────────────────────────────────────────────┐
 │  Snowflake Workspace Notebook                                   │
 │  ┌───────────────────────────────────────────────────────────┐  │
-│  │  Python Kernel                                             │  │
+│  │  Python Kernel                                            │  │
 │  │  ├─ rpy2 (Python-R bridge)                                │  │
 │  │  ├─ %%R magic cells                                       │  │
 │  │  └─ Snowpark session (built-in)                           │  │
@@ -123,10 +123,10 @@ ggplot2 integration with proper Notebook rendering:
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  R Environment (micromamba)                               │  │
 │  │  ├─ R 4.x                                                 │  │
-│  │  ├─ tidyverse, ggplot2, dplyr                            │  │
-│  │  ├─ forecast (time series)                               │  │
-│  │  ├─ adbcsnowflake (optional)                             │  │
-│  │  └─ reticulate (Python interop from R)                   │  │
+│  │  ├─ tidyverse, ggplot2, dplyr                             │  │
+│  │  ├─ forecast (time series)                                │  │
+│  │  ├─ adbcsnowflake (optional)                              │  │
+│  │  └─ reticulate (Python interop from R)                    │  │
 │  └───────────────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
                           │

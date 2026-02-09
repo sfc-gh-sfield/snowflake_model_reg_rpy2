@@ -1683,3 +1683,240 @@ def close_r_connection() -> Tuple[bool, str]:
         return True, "R Snowflake connection closed"
     except Exception as e:
         return False, f"Error closing connection: {e}"
+
+
+# =============================================================================
+# Cross-Environment Support (Workspace + Local IDE)
+# =============================================================================
+
+def detect_environment() -> Tuple[str, Any]:
+    """
+    Detect whether running in Snowflake Workspace Notebook or local IDE.
+    
+    This function checks for Snowflake Workspace indicators and returns
+    appropriate session or configuration for connecting to Snowflake.
+    
+    Returns:
+        Tuple of (environment_type, session_or_config):
+        - ('workspace', session) if in Workspace Notebook
+        - ('local', config_dict) if in local IDE (VSCode/Cursor)
+    
+    Example:
+        >>> env_type, config = detect_environment()
+        >>> if env_type == 'workspace':
+        ...     session = config
+        ...     print(f"Connected as: {session.get_current_user()}")
+        ... else:
+        ...     print(f"Local config: {config['account']}")
+    """
+    # Check for Snowflake Workspace indicators
+    workspace_indicators = [
+        os.path.exists('/snowflake/session/token'),  # SPCS token file
+        'SNOWFLAKE_HOST' in os.environ,              # Workspace env vars
+        os.getcwd().startswith('/home/udf'),         # Workspace working dir
+    ]
+    
+    if any(workspace_indicators):
+        try:
+            from snowflake.snowpark.context import get_active_session
+            session = get_active_session()
+            return ('workspace', session)
+        except Exception as e:
+            print(f"Warning: In Workspace but session failed: {e}")
+    
+    # Local IDE - return config for manual connection
+    config = {
+        'account': os.environ.get('SNOWFLAKE_ACCOUNT', '<YOUR_ACCOUNT>'),
+        'user': os.environ.get('SNOWFLAKE_USER', '<YOUR_USER>'),
+        'database': os.environ.get('SNOWFLAKE_DATABASE', '<YOUR_DATABASE>'),
+        'warehouse': os.environ.get('SNOWFLAKE_WAREHOUSE', '<YOUR_WAREHOUSE>'),
+        'schema': os.environ.get('SNOWFLAKE_SCHEMA', 'PUBLIC'),
+        'role': os.environ.get('SNOWFLAKE_ROLE', None),
+        'private_key_path': os.environ.get(
+            'SNOWFLAKE_PRIVATE_KEY_PATH', 
+            os.path.expanduser('~/.snowflake/keys/rsa_key.p8')
+        ),
+    }
+    return ('local', config)
+
+
+def get_snowpark_session(config: Optional[Dict[str, str]] = None):
+    """
+    Create a Snowpark session for the current environment.
+    
+    In Workspace Notebook: Returns existing active session
+    In Local IDE: Creates session with key-pair or password auth
+    
+    Args:
+        config: Optional config dict for local IDE. If not provided,
+                uses detect_environment() to get config.
+    
+    Returns:
+        Snowpark Session object
+    
+    Example:
+        >>> session = get_snowpark_session()
+        >>> print(session.get_current_user())
+    """
+    env_type, env_config = detect_environment()
+    
+    if env_type == 'workspace':
+        return env_config  # Already a session
+    
+    # Local IDE - create session with config
+    from snowflake.snowpark import Session
+    
+    cfg = config or env_config
+    
+    # Build connection parameters
+    connection_parameters = {
+        'account': cfg['account'],
+        'user': cfg['user'],
+        'database': cfg.get('database'),
+        'warehouse': cfg.get('warehouse'),
+        'schema': cfg.get('schema', 'PUBLIC'),
+    }
+    
+    if cfg.get('role'):
+        connection_parameters['role'] = cfg['role']
+    
+    # Check for key-pair auth
+    key_path = cfg.get('private_key_path')
+    if key_path and os.path.exists(key_path):
+        with open(key_path, 'rb') as key_file:
+            from cryptography.hazmat.backends import default_backend
+            from cryptography.hazmat.primitives import serialization
+            
+            private_key = serialization.load_pem_private_key(
+                key_file.read(),
+                password=None,
+                backend=default_backend()
+            )
+            
+            private_key_bytes = private_key.private_bytes(
+                encoding=serialization.Encoding.DER,
+                format=serialization.PrivateFormat.PKCS8,
+                encryption_algorithm=serialization.NoEncryption()
+            )
+            
+            connection_parameters['private_key'] = private_key_bytes
+    elif os.environ.get('SNOWFLAKE_PASSWORD'):
+        connection_parameters['password'] = os.environ['SNOWFLAKE_PASSWORD']
+    else:
+        raise ValueError(
+            "No authentication method available. Provide either:\n"
+            "  - Private key at ~/.snowflake/keys/rsa_key.p8\n"
+            "  - SNOWFLAKE_PASSWORD environment variable"
+        )
+    
+    return Session.builder.configs(connection_parameters).create()
+
+
+def query_snowflake_to_r(sql: str, r_var_name: str, session=None) -> int:
+    """
+    Execute a Snowflake query and transfer results to R.
+    
+    Works in both Workspace Notebooks and local IDE.
+    
+    Args:
+        sql: SQL query to execute
+        r_var_name: Name of the R variable to store results
+        session: Optional Snowpark session. If not provided, will be auto-detected.
+    
+    Returns:
+        Number of rows transferred
+    
+    Example:
+        >>> n_rows = query_snowflake_to_r(
+        ...     "SELECT * FROM customers LIMIT 100",
+        ...     "r_customers"
+        ... )
+        >>> print(f"Transferred {n_rows} rows to R")
+    """
+    import rpy2.robjects as ro
+    from rpy2.robjects import pandas2ri
+    from rpy2.robjects.conversion import localconverter
+    
+    # Get or create session
+    if session is None:
+        session = get_snowpark_session()
+    
+    # Execute query and convert to pandas
+    df = session.sql(sql).to_pandas()
+    
+    # Transfer to R
+    with localconverter(ro.default_converter + pandas2ri.converter):
+        r_df = ro.conversion.py2rpy(df)
+        ro.globalenv[r_var_name] = r_df
+    
+    return len(df)
+
+
+def get_duckdb_snowflake_secret_sql(config: Dict[str, str], secret_name: str = 'sf_keypair') -> str:
+    """
+    Generate the CREATE SECRET SQL for DuckDB Snowflake extension.
+    
+    Args:
+        config: Dict with account, user, database, warehouse, and private key
+        secret_name: Name for the secret (default: 'sf_keypair')
+    
+    Returns:
+        SQL string for CREATE SECRET statement
+    
+    Example:
+        >>> config = {'account': 'xy12345', 'user': 'MYUSER', ...}
+        >>> sql = get_duckdb_snowflake_secret_sql(config)
+        >>> dbExecute(con, sql)
+    """
+    # Read private key if path provided
+    private_key = config.get('private_key', '')
+    if not private_key and config.get('private_key_path'):
+        key_path = os.path.expanduser(config['private_key_path'])
+        if os.path.exists(key_path):
+            with open(key_path, 'r') as f:
+                private_key = f.read()
+    
+    # Escape single quotes in key
+    private_key_escaped = private_key.replace("'", "''")
+    
+    sql = f"""
+CREATE OR REPLACE SECRET {secret_name} (
+    TYPE snowflake,
+    ACCOUNT '{config['account']}',
+    USER '{config['user']}',
+    DATABASE '{config.get('database', '')}',
+    WAREHOUSE '{config.get('warehouse', '')}',
+    AUTH_TYPE 'key_pair',
+    PRIVATE_KEY '{private_key_escaped}'
+)"""
+    return sql.strip()
+
+
+def print_environment_info():
+    """
+    Print information about the current environment.
+    
+    Useful for debugging and verification.
+    """
+    env_type, config = detect_environment()
+    
+    print(f"Environment: {env_type.upper()}")
+    print("-" * 40)
+    
+    if env_type == 'workspace':
+        session = config
+        print(f"Account:   {session.sql('SELECT CURRENT_ACCOUNT()').collect()[0][0]}")
+        print(f"User:      {session.sql('SELECT CURRENT_USER()').collect()[0][0]}")
+        print(f"Role:      {session.get_current_role()}")
+        print(f"Database:  {session.get_current_database()}")
+        print(f"Schema:    {session.get_current_schema()}")
+        print(f"Warehouse: {session.get_current_warehouse()}")
+    else:
+        print(f"Account:   {config['account']}")
+        print(f"User:      {config['user']}")
+        print(f"Database:  {config.get('database', 'Not set')}")
+        print(f"Warehouse: {config.get('warehouse', 'Not set')}")
+        
+        key_path = config.get('private_key_path', '')
+        key_status = "Found" if os.path.exists(key_path) else "NOT FOUND"
+        print(f"Key Path:  {key_path} ({key_status})")

@@ -12,6 +12,8 @@
 # Options:
 #   --basic       Install R and packages from r_packages.yaml only (default)
 #   --adbc        Install R packages plus ADBC Snowflake driver for direct DB access
+#   --full        Full installation: R + ADBC + DuckDB with Snowflake extension
+#   --duckdb      Install DuckDB with Snowflake extension (requires --adbc or --full)
 #   --config FILE Specify alternate package config file (default: r_packages.yaml)
 #   --log FILE    Write output to log file (default: setup_r.log)
 #   --no-log      Disable logging to file
@@ -50,6 +52,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/r_packages.yaml"
 LOG_FILE="${SCRIPT_DIR}/setup_r.log"
 INSTALL_ADBC=false
+INSTALL_DUCKDB=false
 ENABLE_LOGGING=true
 VERBOSE=false
 FORCE_REINSTALL=false
@@ -294,6 +297,8 @@ Usage: ./setup_r_environment.sh [OPTIONS]
 Options:
   --basic       Install R and packages from r_packages.yaml only (default)
   --adbc        Install R packages plus ADBC Snowflake driver for direct DB access
+  --full        Full installation: R + ADBC + DuckDB with Snowflake extension
+  --duckdb      Install DuckDB with Snowflake extension (requires --adbc or --full)
   --config FILE Specify alternate package config file (default: r_packages.yaml)
   --log FILE    Write output to log file (default: setup_r.log)
   --no-log      Disable logging to file
@@ -321,6 +326,7 @@ The package configuration file (r_packages.yaml) supports:
 Examples:
   ./setup_r_environment.sh                    # Basic R installation
   ./setup_r_environment.sh --adbc             # R + ADBC driver for Snowflake
+  ./setup_r_environment.sh --full             # R + ADBC + DuckDB (recommended for dplyr workflows)
   ./setup_r_environment.sh --config custom.yaml --adbc
   ./setup_r_environment.sh --adbc --verbose   # With detailed logging
 EOF
@@ -330,10 +336,20 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --basic)
             INSTALL_ADBC=false
+            INSTALL_DUCKDB=false
             shift
             ;;
         --adbc)
             INSTALL_ADBC=true
+            shift
+            ;;
+        --duckdb)
+            INSTALL_DUCKDB=true
+            shift
+            ;;
+        --full)
+            INSTALL_ADBC=true
+            INSTALL_DUCKDB=true
             shift
             ;;
         --config)
@@ -757,7 +773,97 @@ REOF
     fi
     
     # =========================================================================
-    # Step 7: Summary
+    # Step 7: DuckDB Installation (optional)
+    # =========================================================================
+    
+    if [ "${INSTALL_DUCKDB}" = true ]; then
+        echo ""
+        log_info "Step 7: Installing DuckDB with Snowflake extension..."
+        
+        # Install DuckDB R packages
+        log_info "  Installing DuckDB R packages..."
+        "${ENV_PREFIX}/bin/R" --vanilla --quiet << 'REOF'
+# Set library path
+lib_path <- Sys.getenv("R_LIBS_USER")
+if (lib_path == "" || !dir.exists(lib_path)) {
+    lib_path <- file.path(Sys.getenv("HOME"), ".local/share/mamba/envs/r_env/lib/R/library")
+}
+
+# Install DuckDB packages
+packages_needed <- c("DBI", "duckdb", "dbplyr")
+for (pkg in packages_needed) {
+    if (!requireNamespace(pkg, quietly = TRUE)) {
+        message(sprintf("Installing %s...", pkg))
+        install.packages(pkg, repos = "https://cloud.r-project.org/", lib = lib_path, quiet = TRUE)
+    }
+}
+
+# Verify installation
+suppressPackageStartupMessages({
+    library(DBI)
+    library(duckdb)
+    library(dbplyr)
+})
+message(sprintf("  DuckDB version: %s", packageVersion("duckdb")))
+message("  DuckDB R packages installed successfully")
+REOF
+        
+        # Install DuckDB Snowflake extension
+        log_info "  Installing DuckDB Snowflake extension..."
+        "${ENV_PREFIX}/bin/R" --vanilla --quiet << 'REOF'
+library(DBI)
+library(duckdb)
+
+# Create temporary DuckDB connection to install extension
+con <- dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+
+tryCatch({
+    # Install Snowflake extension from community repo
+    dbExecute(con, "INSTALL snowflake FROM community")
+    dbExecute(con, "LOAD snowflake")
+    message("  DuckDB Snowflake extension installed")
+    
+    # Get extension directory for symlink
+    ext_info <- dbGetQuery(con, "SELECT extension_directory() as dir")
+    message(sprintf("  Extension directory: %s", ext_info$dir))
+}, error = function(e) {
+    message(sprintf("  Warning: Extension install: %s", conditionMessage(e)))
+})
+
+dbDisconnect(con)
+REOF
+        
+        # Set up ADBC driver symlink for DuckDB (if ADBC is installed)
+        if [ "${INSTALL_ADBC}" = true ]; then
+            log_info "  Setting up ADBC driver symlink for DuckDB..."
+            
+            # Find DuckDB extension directory
+            DUCKDB_EXT_DIR=$("${ENV_PREFIX}/bin/R" --vanilla --quiet -e 'library(duckdb); con <- dbConnect(duckdb()); cat(DBI::dbGetQuery(con, "SELECT extension_directory() as d")$d); dbDisconnect(con)' 2>/dev/null || echo "")
+            
+            if [ -n "${DUCKDB_EXT_DIR}" ] && [ -d "${DUCKDB_EXT_DIR}" ]; then
+                # Look for ADBC driver in conda environment
+                ADBC_SOURCE="${ENV_PREFIX}/lib/libadbc_driver_snowflake.so"
+                
+                if [ -f "${ADBC_SOURCE}" ]; then
+                    # Create symlink
+                    ln -sf "${ADBC_SOURCE}" "${DUCKDB_EXT_DIR}/libadbc_driver_snowflake.so"
+                    log_info "    Created symlink: ${DUCKDB_EXT_DIR}/libadbc_driver_snowflake.so -> ${ADBC_SOURCE}"
+                else
+                    log_info "    Note: ADBC driver not found at ${ADBC_SOURCE}"
+                fi
+            else
+                log_info "    Note: Could not determine DuckDB extension directory"
+            fi
+        fi
+        
+        log_info "  DuckDB installation complete"
+    else
+        echo ""
+        log_info "Step 7: Skipping DuckDB installation (use --duckdb or --full flag to enable)"
+    fi
+    
+    # =========================================================================
+    # Step 8: Summary
     # =========================================================================
     
     echo ""
