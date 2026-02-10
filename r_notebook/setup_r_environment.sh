@@ -749,6 +749,14 @@ if (!requireNamespace("adbcdrivermanager", quietly = TRUE)) {
     message("adbcdrivermanager already installed")
 }
 
+# Install adbi (DBI-compliant ADBC interface for dplyr/dbplyr)
+if (!requireNamespace("adbi", quietly = TRUE)) {
+    message("Installing adbi from CRAN (enables dplyr with ADBC)...")
+    install.packages("adbi", repos = "https://cloud.r-project.org", quiet = TRUE)
+} else {
+    message("adbi already installed")
+}
+
 # Install adbcsnowflake from R-multiverse (requires Go)
 if (!requireNamespace("adbcsnowflake", quietly = TRUE)) {
     message("Installing adbcsnowflake from R-multiverse (this may take a few minutes)...")
