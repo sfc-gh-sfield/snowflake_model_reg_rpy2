@@ -92,22 +92,23 @@ sample_queries:
     orders: "ORDERS"
 
 # =============================================================================
-# SECTION 8: Iceberg Integration (Experimental)
+# SECTION 8: Iceberg Integration
 # =============================================================================
-# Settings for Iceberg table examples.
-# Requires: Snowflake-managed Iceberg tables feature enabled in your account.
+# Settings for Iceberg table examples using Snowflake-managed Iceberg.
+# Uses internal Snowflake storage (no external S3/Azure/GCS required).
+# GA in most regions as of 2026.
 
 iceberg:
   # Name for the Iceberg test table created in Section 8.1
+  # The notebook creates this from SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION
   # Used by: Sections 8.1, 8.3, 8.4
   test_table_name: "NATION_ICEBERG"
   
   # External volume for Iceberg storage
-  # Must exist in your account before running Section 8.1
-  # Create with: CREATE EXTERNAL VOLUME ... (see Snowflake docs)
+  # Section 8.1 creates this with STORAGE_PROVIDER = 'SNOWFLAKE' (internal storage)
+  # No external cloud storage configuration needed!
   # Used by: Section 8.1 (CREATE ICEBERG TABLE)
-  external_volume: "<YOUR_EXTERNAL_VOLUME>"
+  external_volume: "iceberg_internal_vol"
   
-  # Optional: Catalog integration for external Iceberg catalog
-  # Uncomment if using external catalog (e.g., AWS Glue, Polaris)
-  # catalog_integration: "<YOUR_CATALOG_INTEGRATION>"
+  # Note: If internal storage is not available in your account/region,
+  # you can create an external volume pointing to S3/Azure/GCS and update this value.
