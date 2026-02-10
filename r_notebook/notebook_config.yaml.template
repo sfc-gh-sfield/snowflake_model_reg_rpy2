@@ -1,0 +1,113 @@
+# =============================================================================
+# R Workspace Notebook Configuration
+# =============================================================================
+# Copy this file to notebook_config.yaml and customize for your environment.
+#
+# Usage:
+#   cp notebook_config.yaml.template notebook_config.yaml
+#   # Edit notebook_config.yaml with your values
+#
+# The notebook loads this config in Section 3.1 and uses values throughout.
+# =============================================================================
+
+# =============================================================================
+# SECTION 3.1: Connection Parameters
+# =============================================================================
+# Used for Snowflake connectivity setup.
+#
+# WORKSPACE NOTEBOOKS: account, user, and private_key_path are IGNORED
+#                      (authentication is handled by the session)
+#
+# LOCAL IDE (VSCode/Cursor): All connection parameters are REQUIRED
+#                            for key-pair authentication
+
+connection:
+  # Snowflake account identifier
+  # Format: "xy12345" or "xy12345.us-east-1" (not the full URL)
+  # Used by: Local IDE only
+  account: "<YOUR_ACCOUNT>"
+  
+  # Snowflake username
+  # Used by: Local IDE only
+  user: "<YOUR_USER>"
+  
+  # Path to RSA private key file (PKCS8 format, unencrypted)
+  # Used by: Local IDE for key-pair authentication
+  # Generate with: openssl genrsa 2048 | openssl pkcs8 -topk8 -out key.p8 -nocrypt
+  private_key_path: "~/.ssh/snowflake_rsa_key.p8"
+
+# =============================================================================
+# SECTION 3.1+: Default Database Context
+# =============================================================================
+# Default database, schema, and warehouse for queries.
+#
+# WORKSPACE NOTEBOOKS: These override session defaults if specified.
+#                      Leave empty ("") to use session defaults.
+#
+# LOCAL IDE: These are used for all connections.
+
+defaults:
+  # Default database for queries
+  # Used by: Sections 3, 5, 6, 7, 8 (all query examples)
+  database: "SNOWFLAKE_SAMPLE_DATA"
+  
+  # Default schema for queries  
+  # Used by: Sections 3, 5, 6, 7, 8 (all query examples)
+  schema: "TPCH_SF1"
+  
+  # Warehouse for compute operations
+  # Used by: All Snowflake queries
+  warehouse: "<YOUR_WAREHOUSE>"
+  
+  # Optional: Default role (uncomment to use)
+  # role: "PUBLIC"
+
+# =============================================================================
+# SECTIONS 3-7: Sample Query Settings
+# =============================================================================
+# Settings for example queries throughout the notebook.
+# Adjust based on your data size and performance requirements.
+
+sample_queries:
+  # Default row limit for quick example queries
+  # Used by: Sections 3.6, 3.7, 5.3 (basic examples)
+  default_row_limit: 1000
+  
+  # Large query row limit for analysis/visualization examples
+  # Used by: Sections 6.3, 7.4, 7.5 (charts, aggregations)
+  large_row_limit: 10000
+  
+  # Date filter for time-series examples (YYYY-MM-DD format)
+  # Used by: Section 7.3 (orders analysis with DuckDB)
+  sample_start_date: "1995-01-01"
+  
+  # Sample tables from TPCH dataset
+  # Change these if using a different sample dataset
+  tables:
+    # Nation reference table (small, ~25 rows)
+    nation: "NATION"
+    # Customer table (medium, ~150K rows in SF1)
+    customer: "CUSTOMER"  
+    # Orders table (large, ~1.5M rows in SF1)
+    orders: "ORDERS"
+
+# =============================================================================
+# SECTION 8: Iceberg Integration (Experimental)
+# =============================================================================
+# Settings for Iceberg table examples.
+# Requires: Snowflake-managed Iceberg tables feature enabled in your account.
+
+iceberg:
+  # Name for the Iceberg test table created in Section 8.1
+  # Used by: Sections 8.1, 8.3, 8.4
+  test_table_name: "NATION_ICEBERG"
+  
+  # External volume for Iceberg storage
+  # Must exist in your account before running Section 8.1
+  # Create with: CREATE EXTERNAL VOLUME ... (see Snowflake docs)
+  # Used by: Section 8.1 (CREATE ICEBERG TABLE)
+  external_volume: "<YOUR_EXTERNAL_VOLUME>"
+  
+  # Optional: Catalog integration for external Iceberg catalog
+  # Uncomment if using external catalog (e.g., AWS Glue, Polaris)
+  # catalog_integration: "<YOUR_CATALOG_INTEGRATION>"

@@ -144,6 +144,11 @@ snowflake_credentials.json
 # Snowflake connection configs (may contain credentials)
 connection.json
 connections.toml
+
+# Notebook configuration (contains account-specific values)
+# Template is tracked: notebook_config.yaml.template
+r_notebook/notebook_config.yaml
+notebook_config.yaml
 ~/.snowsql/
 
 # ============================

@@ -90,6 +90,7 @@ EXCLUDES=(
     ".DS_Store"
     "notebook_env"
     ".folder"
+    "notebook_config.yaml"    # Exclude dev config (template is included)
 )
 
 # Files/folders to preserve in target (not delete)
@@ -168,8 +169,58 @@ find "$TARGET_DIR" -type f \( -name "*.ipynb" -o -name "*.py" -o -name "*.md" -o
 done
 echo ""
 
-# Step 3: Clear notebook outputs (security measure)
-echo -e "${YELLOW}Step 3: Clearing notebook outputs...${NC}"
+# Step 3: Create/update .gitignore for public repo
+echo -e "${YELLOW}Step 3: Updating .gitignore...${NC}"
+cat > "$TARGET_DIR/.gitignore" << 'GITIGNORE_EOF'
+# =============================================================================
+# R Workspace Notebook - Public Repository .gitignore
+# =============================================================================
+
+# User configuration (created from template)
+# Users should copy notebook_config.yaml.template to notebook_config.yaml
+notebook_config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# R
+.Rhistory
+.RData
+.Rproj.user/
+
+# Logs
+*.log
+setup_*.log
+
+# Environment
+.venv/
+venv/
+.conda/
+notebook_env/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+GITIGNORE_EOF
+echo "  Created .gitignore"
+echo ""
+
+# Step 4: Clear notebook outputs (security measure)
+echo -e "${YELLOW}Step 4: Clearing notebook outputs...${NC}"
 python3 - "$TARGET_DIR" << 'PYEOF'
 import json
 import os
@@ -203,10 +254,15 @@ for root, dirs, files in os.walk(target_dir):
 PYEOF
 echo ""
 
-# Step 4: Summary
+# Step 5: Summary
 echo -e "${GREEN}=== Sync Complete ===${NC}"
 echo ""
 echo "Files synced to: $TARGET_DIR"
+echo ""
+echo "Configuration:"
+echo "  - notebook_config.yaml.template included (users copy to create their config)"
+echo "  - notebook_config.yaml excluded (dev-specific, gitignored)"
+echo "  - .gitignore created/updated for public repo"
 echo ""
 echo "Next steps:"
 echo "  1. cd $TARGET_DIR"
