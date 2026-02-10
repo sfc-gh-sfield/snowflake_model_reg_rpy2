@@ -16,7 +16,10 @@ This folder contains everything needed to run R within Snowflake Workspace Noteb
 | File | Description |
 |------|-------------|
 | `r_workspace_notebook.ipynb` | Main notebook with examples and documentation |
-| `r_forecasting_demo.ipynb` | **End-to-end forecasting demo** (train, register, inference) |
+| `r_forecasting_demo.ipynb` | End-to-end forecasting demo (manual Python wrapper approach) |
+| `r_registry_demo.ipynb` | **R-native Model Registry demo** (uses R wrapper functions) |
+| `snowflake_registry.R` | **R wrapper library** for Snowflake Model Registry |
+| `sf_registry_bridge.py` | Python bridge module (called by snowflake_registry.R) |
 | `setup_r_environment.sh` | Installation script for R environment |
 | `r_packages.yaml` | Package configuration (edit to customize) |
 | `r_helpers.py` | Helper module for PAT management and diagnostics |
@@ -233,19 +236,93 @@ close_snowflake_connection()  # Clean up
 
 These minimums are enforced in the default `r_packages.yaml`. If you see warnings about reticulate/rpy2 compatibility, ensure `r-reticulate >= 1.25` is installed.
 
-## Forecasting Demo
+## R Model Registry Wrapper (NEW)
 
-The `r_forecasting_demo.ipynb` notebook provides a complete end-to-end example:
+The `snowflake_registry.R` library provides **R-native functions** to register and serve R models in Snowflake's Model Registry - no Python code needed from the R user.
 
-1. **Configure** - Set database, schema, warehouse (customizable at top)
-2. **Query Data** - TPC-H orders data from Snowflake
-3. **Train Model** - R `auto.arima()` for automatic ARIMA parameter selection
-4. **Register** - Log model to Snowflake Model Registry with rpy2 wrapper
+### Quick Example
+
+```r
+source("snowflake_registry.R")
+sf_registry_init()
+
+# Train model in R (as usual)
+library(forecast)
+model <- auto.arima(AirPassengers)
+
+# Test locally (uses the same wrapper that runs in Snowflake)
+preds <- sf_registry_predict_local(model, data.frame(period = 1:12),
+                                    predict_fn = "forecast",
+                                    predict_pkgs = c("forecast"))
+
+# Register to Snowflake Model Registry (one function call!)
+mv <- sf_registry_log_model(
+  model, model_name = "MY_FORECAST",
+  predict_fn = "forecast", predict_pkgs = c("forecast"),
+  input_cols  = list(period = "integer"),
+  output_cols = list(point_forecast = "double", lower_80 = "double",
+                     upper_80 = "double", lower_95 = "double",
+                     upper_95 = "double")
+)
+
+# Run remote inference
+sf_registry_predict("MY_FORECAST", data.frame(period = 1:12),
+                     service_name = "my_svc")
+```
+
+### Available Functions
+
+| Function | Purpose |
+|----------|---------|
+| `sf_registry_init()` | Initialize the wrapper |
+| `sf_registry_log_model()` | Register R model to registry |
+| `sf_registry_predict_local()` | Test model locally |
+| `sf_registry_predict()` | Run remote inference |
+| `sf_registry_show_models()` | List registered models |
+| `sf_registry_show_versions()` | List model versions |
+| `sf_registry_get_model()` | Get model details |
+| `sf_registry_set_metric()` | Add metrics |
+| `sf_registry_show_metrics()` | View metrics |
+| `sf_registry_create_service()` | Deploy to SPCS |
+| `sf_registry_delete_model()` | Delete model |
+| `sf_registry_help()` | Show help |
+
+### Architecture
+
+```
+R user code
+  → snowflake_registry.R     (user-facing R functions)
+  → reticulate                (R-Python bridge)
+  → sf_registry_bridge.py    (auto-generates CustomModel wrappers)
+  → snowflake.ml.registry    (Snowflake ML Python SDK)
+```
+
+See `r_registry_demo.ipynb` for the full walkthrough.
+
+## Forecasting Demos
+
+### r_registry_demo.ipynb (Recommended)
+
+Uses the **R wrapper functions** - R users never write Python:
+
+1. Train model in pure R
+2. `sf_registry_log_model()` to register
+3. `sf_registry_predict()` for inference
+4. Includes examples for: ARIMA, linear models, ARIMAX with exogenous vars
+
+### r_forecasting_demo.ipynb (Manual Approach)
+
+Shows the underlying **manual Python wrapper** approach:
+
+1. **Query Data** - TPC-H orders data from Snowflake
+2. **Train Model** - R `auto.arima()` for automatic ARIMA parameter selection
+3. **Write Python Wrapper** - ~80 lines of CustomModel class
+4. **Register** - Log model to Snowflake Model Registry
 5. **Deploy** - Create SPCS service for inference
 6. **Predict** - Generate forecasts via the deployed model
 7. **Visualize** - Create ggplot2 charts of results
 
-This demo is designed for **R-preferring data scientists** who need to integrate with Snowflake's MLOps ecosystem.
+Both demos are designed for **R-preferring data scientists** who need to integrate with Snowflake's MLOps ecosystem.
 
 ## Limitations
 
