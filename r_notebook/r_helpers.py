@@ -871,7 +871,7 @@ test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
     
     # Test query - collect to data frame to release the stream
     result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'KEY_PAIR' AS AUTH_METHOD") |> as.data.frame()
-    message("✓ Key Pair authentication SUCCESSFUL")
+    message("[OK] Key Pair authentication SUCCESSFUL")
     rprint(result)
     
     # Clean up test connection
@@ -880,7 +880,7 @@ test_keypair_auth <- function(private_key_path = NULL, passphrase = NULL) {
     
     return(list(success = TRUE, method = "auth_jwt"))
   }, error = function(e) {
-    message("✗ Key Pair authentication FAILED: ", e$message)
+    message("[FAIL] Key Pair authentication FAILED: ", e$message)
     return(list(success = FALSE, method = "auth_jwt", error = e$message))
   })
 }
@@ -928,7 +928,7 @@ test_oauth_auth <- function(token = NULL) {
     
     # Test query - collect to data frame to release the stream
     result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'OAUTH' AS AUTH_METHOD") |> as.data.frame()
-    message("✓ OAuth authentication SUCCESSFUL")
+    message("[OK] OAuth authentication SUCCESSFUL")
     rprint(result)
     
     # Clean up test connection
@@ -937,7 +937,7 @@ test_oauth_auth <- function(token = NULL) {
     
     return(list(success = TRUE, method = "auth_oauth"))
   }, error = function(e) {
-    message("✗ OAuth authentication FAILED: ", e$message)
+    message("[FAIL] OAuth authentication FAILED: ", e$message)
     return(list(success = FALSE, method = "auth_oauth", error = e$message))
   })
 }
@@ -949,7 +949,7 @@ test_spcs_token <- function() {
   token_path <- "/snowflake/session/token"
   
   if (!file.exists(token_path)) {
-    message("✗ SPCS token file not found: ", token_path)
+    message("[FAIL] SPCS token file not found: ", token_path)
     return(list(success = FALSE, method = "spcs_oauth", error = "Token file not found"))
   }
   
@@ -1004,7 +1004,7 @@ test_password_auth <- function(password = NULL) {
     con <- adbc_connection_init(db)
     
     result <- con |> read_adbc("SELECT CURRENT_USER() AS USER, 'PASSWORD' AS AUTH_METHOD") |> as.data.frame()
-    message("✓ Password authentication SUCCESSFUL (unexpected!)")
+    message("[OK] Password authentication SUCCESSFUL (unexpected!)")
     rprint(result)
     
     adbc_connection_release(con)
@@ -1012,7 +1012,7 @@ test_password_auth <- function(password = NULL) {
     
     return(list(success = TRUE, method = "auth_snowflake"))
   }, error = function(e) {
-    message("✗ Password authentication FAILED (expected): ", e$message)
+    message("[FAIL] Password authentication FAILED (expected): ", e$message)
     return(list(success = FALSE, method = "auth_snowflake", error = e$message))
   })
 }
@@ -1101,7 +1101,7 @@ def check_environment() -> Dict[str, Any]:
     Example:
         >>> diag = check_environment()
         >>> for component, status in diag.items():
-        ...     print(f"{component}: {'✓' if status['ok'] else '✗'}")
+        ...     print(f"{component}: {'[OK]' if status['ok'] else '[FAIL]'}")
     """
     diagnostics = {}
     
@@ -1368,7 +1368,7 @@ def print_diagnostics(diagnostics: Optional[Dict[str, Any]] = None) -> None:
     print("=" * 60)
     
     for component, result in diagnostics.items():
-        status = "✓" if result['ok'] else "✗"
+        status = "[OK]" if result['ok'] else "[FAIL]"
         print(f"\n{status} {component.upper().replace('_', ' ')}")
         
         for key, value in result['details'].items():

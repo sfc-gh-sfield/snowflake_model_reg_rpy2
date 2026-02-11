@@ -472,7 +472,7 @@ PYEOF
     log_info "Step 1: Installing micromamba..."
     
     if [ "${FORCE_REINSTALL}" = false ] && [ -x "${MICROMAMBA_ROOT}/bin/micromamba" ]; then
-        log_info "  ✓ micromamba already installed (skipping)"
+        log_info "  [OK] micromamba already installed (skipping)"
     else
         log_info "  Downloading micromamba..."
         mkdir -p "${MICROMAMBA_ROOT}/bin"
@@ -548,7 +548,7 @@ PYEOF
         MISSING_PACKAGES=$(get_missing_conda_packages "${ENV_NAME}" "${INSTALL_PACKAGES[@]}")
         
         if [ -z "${MISSING_PACKAGES}" ]; then
-            log_info "  ✓ All conda packages already installed (skipping)"
+            log_info "  [OK] All conda packages already installed (skipping)"
         else
             log_info "  Installing missing packages: ${MISSING_PACKAGES}"
             retry_command \
@@ -605,7 +605,7 @@ PYEOF
         fix_symlink "lzma"
         
         if [ ${SYMLINKS_CREATED} -eq 0 ]; then
-            log_info "  ✓ Symlinks already configured"
+            log_info "  [OK] Symlinks already configured"
         else
             log_info "  Created ${SYMLINKS_CREATED} symlink(s)"
         fi
@@ -703,12 +703,12 @@ REOF
         
         # Check if ADBC is already fully installed
         if [ "${FORCE_REINSTALL}" = false ] && is_adbc_installed "${ENV_PREFIX}"; then
-            log_info "  ✓ ADBC packages already installed (skipping)"
+            log_info "  [OK] ADBC packages already installed (skipping)"
             log_info "    Use --force to reinstall"
         else
             # 6a. Install Go
             if [ "${FORCE_REINSTALL}" = false ] && is_go_installed "${ENV_NAME}"; then
-                log_info "  ✓ Go compiler already installed"
+                log_info "  [OK] Go compiler already installed"
             else
                 log_info "  Installing Go compiler..."
                 retry_command \
@@ -725,7 +725,7 @@ REOF
             
             # 6b. Install libadbc-driver-snowflake
             if [ "${FORCE_REINSTALL}" = false ] && is_conda_pkg_installed "libadbc-driver-snowflake" "${ENV_NAME}"; then
-                log_info "  ✓ ADBC C driver already installed"
+                log_info "  [OK] ADBC C driver already installed"
             else
                 log_info "  Installing ADBC C driver..."
                 retry_command \
@@ -805,7 +805,7 @@ REOF
         fi
         
         if [ "${DUCKDB_INSTALLED}" = true ] && [ "${FORCE_REINSTALL}" = false ]; then
-            log_info "    ✓ DuckDB R packages already installed (skipping)"
+            log_info "    [OK] DuckDB R packages already installed (skipping)"
         else
             retry_command \
                 "micromamba install -y -n '${ENV_NAME}' -c '${CHANNEL}' r-duckdb r-dbplyr" \
