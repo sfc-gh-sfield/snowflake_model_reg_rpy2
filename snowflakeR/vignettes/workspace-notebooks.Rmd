@@ -1,0 +1,271 @@
+---
+title: "Using snowflakeR in Workspace Notebooks"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Using snowflakeR in Workspace Notebooks}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+Snowflake Workspace Notebooks provide a managed Jupyter environment with a
+Python kernel. `snowflakeR` works seamlessly in this environment via `rpy2`
+and `%%R` magic cells, giving R users full access to Snowflake ML features
+without leaving the notebook.
+
+This vignette covers the Workspace-specific setup and patterns. For general
+`snowflakeR` usage, see `vignette("getting-started")`.
+
+## Architecture
+
+In a Workspace Notebook, the data flow is:
+
+```
+Python Kernel (Jupyter)
+  |-- rpy2 (Python-R bridge)
+  |     |-- %%R magic cells (R code execution)
+  |     |-- snowflakeR (R package)
+  |           |-- reticulate (R-Python bridge)
+  |                 |-- snowflake-ml-python (Snowflake ML SDK)
+  |                       |-- Snowpark Session (built-in)
+  |
+  |-- Active Snowpark Session (auto-detected by sfr_connect())
+```
+
+The key insight: `snowflakeR` uses `reticulate` to call Python under the
+hood, while the Workspace Notebook uses `rpy2` to call R from Python. This
+bidirectional bridge is transparent -- you just write R code.
+
+## Setup
+
+### Step 1: Install the R environment
+
+Workspace Notebooks run in containers without R pre-installed. Use the
+setup script (included in the `r_notebook/` directory):
+
+```python
+# Python cell -- run once per session (~3 minutes)
+!bash setup_r_environment.sh --basic
+```
+
+This installs R, `rpy2`, and base R packages via `micromamba`.
+
+### Step 2: Register the `%%R` magic
+
+```python
+# Python cell
+from r_helpers import setup_r_environment
+
+result = setup_r_environment()
+print(f"R {result['r_version']} ready. %%R magic: {result['magic_registered']}")
+```
+
+After this, any cell starting with `%%R` executes as R code.
+
+### Step 3: Install and load snowflakeR
+
+```r
+%%R
+# Install from local source (in Workspace)
+install.packages("path/to/snowflakeR", repos = NULL, type = "source")
+
+# Or from GitHub (if network access is available)
+# install.packages("pak"); pak::pak("Snowflake-Labs/snowflakeR")
+
+library(snowflakeR)
+```
+
+## Connecting: Auto-detection
+
+The biggest convenience in Workspace Notebooks: `sfr_connect()` automatically
+detects the active Snowpark session. No credentials, no configuration files.
+
+```r
+%%R
+conn <- sfr_connect()
+conn
+#> <sfr_connection>
+#>   environment: "workspace"
+#>   auth: "session_token"
+#>   account: "xy12345"
+#>   database: "MY_DB"
+```
+
+Internally, `sfr_connect()` calls `get_active_session()` from the Snowpark
+Python library. If that succeeds (it always does in Workspace Notebooks),
+it wraps the session in an `sfr_connection` object.
+
+When running locally, `sfr_connect()` falls back to `connections.toml` or
+explicit parameters. Your code works in both environments without changes.
+
+## `%%R` magic patterns
+
+### Basic R cell
+
+```r
+%%R
+library(dplyr)
+result <- sfr_query(conn, "SELECT * FROM my_table LIMIT 10")
+head(result)
+```
+
+### Passing data from Python to R (`-i` flag)
+
+```python
+# Python cell
+import pandas as pd
+py_data = pd.DataFrame({"x": [1, 2, 3], "y": [4, 5, 6]})
+```
+
+```r
+%%R -i py_data
+# py_data is now an R data.frame
+str(py_data)
+summary(py_data)
+```
+
+### Passing data from R to Python (`-o` flag)
+
+```r
+%%R -o r_result
+r_result <- sfr_query(conn, "SELECT * FROM my_table")
+```
+
+```python
+# Python cell -- r_result is now a pandas DataFrame
+r_result.head()
+```
+
+### Plot sizing (`-w` and `-h` flags)
+
+Workspace Notebooks need explicit plot dimensions:
+
+```r
+%%R -w 700 -h 450
+library(ggplot2)
+
+p <- ggplot(mtcars, aes(x = wt, y = mpg)) +
+  geom_point() +
+  theme_minimal()
+
+print(p)  # print() is required to render in Workspace
+```
+
+## Output helpers
+
+Workspace Notebooks add extra line breaks to R output. `snowflakeR` includes
+helper functions for cleaner display:
+
+| Function | Replaces | Description |
+|----------|----------|-------------|
+| `rprint(x)` | `print(x)` | Clean printing of any object |
+| `rview(df, n)` | `head(df)` | View data frame with optional row limit |
+| `rglimpse(df)` | `glimpse(df)` | Compact data frame structure |
+| `rcat(...)` | `cat(...)` | Clean `cat()` output |
+
+```r
+%%R
+df <- sfr_query(conn, "SELECT * FROM my_table")
+
+# Instead of print(df):
+rprint(df)
+
+# Instead of head(df, 10):
+rview(df, n = 10)
+
+# Instead of str(df):
+rglimpse(df)
+```
+
+## PAT management (for ADBC)
+
+Most `snowflakeR` operations use the Snowpark session (no extra auth needed).
+However, if you want **direct R-to-Snowflake queries via ADBC** (e.g., for
+use with `DBI::dbGetQuery()` outside of `snowflakeR`), you need a Personal
+Access Token (PAT):
+
+```python
+# Python cell
+from r_helpers import PATManager
+
+pat_mgr = PATManager(session)
+pat_mgr.create_pat(days_to_expiry=1)
+```
+
+This is only needed for ADBC-based connectivity, not for standard `snowflakeR`
+operations.
+
+## Local vs Workspace differences
+
+| Aspect | Local (RStudio/Posit) | Workspace Notebook |
+|--------|----------------------|-------------------|
+| **R kernel** | Native R | Python + `%%R` magic |
+| **Authentication** | `connections.toml`, key-pair, browser | Auto-detected session |
+| **Package install** | `install.packages()` | `micromamba` + `install.packages()` |
+| **Plotting** | Native plot pane | `%%R -w W -h H` + `print(p)` |
+| **Output** | Standard | Use `rprint()` / `rview()` helpers |
+| **Session persistence** | Persistent | Re-setup each session (~3 min) |
+| **Python interop** | `reticulate` | `rpy2` (bidirectional) |
+| **`sfr_connect()`** | Reads credentials | Wraps active session |
+
+The key design goal: **your `snowflakeR` code is identical** in both
+environments. Only the setup differs.
+
+## Typical workflow
+
+```python
+# Cell 1 (Python): Setup
+from r_helpers import setup_r_environment
+setup_r_environment()
+```
+
+```r
+%%R
+# Cell 2 (R): Load and connect
+library(snowflakeR)
+conn <- sfr_connect()
+fs   <- sfr_feature_store(conn)
+reg  <- sfr_model_registry(conn)
+```
+
+```r
+%%R
+# Cell 3 (R): Generate training data
+training <- sfr_generate_training_data(
+  fs,
+  spine = "SELECT customer_id, churned FROM labels",
+  features = list(list(name = "CUST_FEATURES", version = "v1")),
+  spine_label_cols = "churned"
+)
+```
+
+```r
+%%R -o predictions
+# Cell 4 (R): Train and predict
+model <- glm(churned ~ ., data = training, family = binomial)
+predictions <- sfr_predict_local(model, training)
+```
+
+```python
+# Cell 5 (Python): Visualise or further processing
+predictions.head()
+```
+
+## Interactive notebooks
+
+For runnable notebook versions of the examples above, see the companion
+Jupyter notebooks in `r_notebook/snowflakeR/`:
+
+- `quickstart.ipynb` -- Connection, queries, DBI, visualization
+- `model_registry_demo.ipynb` -- Train, register, predict, manage models
+- `feature_store_demo.ipynb` -- Entities, Feature Views, training data
+
+## Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `rpy2` not found | Run `setup_r_environment()` in a Python cell |
+| `%%R` not recognised | Run `%load_ext rpy2.ipython` |
+| Extra line breaks in output | Use `rprint()`, `rview()`, `rglimpse()` |
+| Package not found | Add to `r_packages.yaml` and re-run setup script |
+| `sfr_connect()` fails | Ensure the Python kernel has an active Snowpark session |
+| Plot not showing | Add `print(p)` and use `-w` / `-h` flags |

@@ -3,6 +3,23 @@
 
 This folder contains everything needed to run R within Snowflake Workspace Notebooks using rpy2.
 
+## snowflakeR Package Notebooks (NEW)
+
+The `snowflakeR/` subdirectory contains **updated notebooks** that use the
+`snowflakeR` R package. These are the recommended starting point:
+
+| Notebook | Description |
+|----------|-------------|
+| [`snowflakeR/quickstart.ipynb`](snowflakeR/quickstart.ipynb) | Connect, query, DBI/dbplyr, visualization |
+| [`snowflakeR/model_registry_demo.ipynb`](snowflakeR/model_registry_demo.ipynb) | Train, register, predict, manage R models |
+| [`snowflakeR/feature_store_demo.ipynb`](snowflakeR/feature_store_demo.ipynb) | Entities, Feature Views, training data, end-to-end ML |
+
+## Original Notebooks (pre-package)
+
+The notebooks below are the original pre-package explorations. They use manual
+`rpy2` setup, `source("snowflake_registry.R")`, and raw helper scripts. They
+are preserved for historical reference.
+
 ## Quick Start
 
 1. Upload this folder to your Snowflake Workspace
@@ -15,6 +32,7 @@ This folder contains everything needed to run R within Snowflake Workspace Noteb
 
 | File | Description |
 |------|-------------|
+| `snowflakeR/` | **snowflakeR package notebooks** (recommended) |
 | `r_workspace_notebook.ipynb` | Main notebook with examples and documentation |
 | `r_forecasting_demo.ipynb` | End-to-end forecasting demo (manual Python wrapper approach) |
 | `r_registry_demo.ipynb` | **R-native Model Registry demo** (uses R wrapper functions) |
