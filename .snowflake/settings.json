@@ -5,7 +5,7 @@
     "serviceDefaults": {
       "runtime": "V2.2-CPU-PY3.12",
       "computePool": "SYSTEM_COMPUTE_POOL_CPU",
-      "idleTimeoutSec": 14400,
+      "idleTimeoutSec": 86400,
       "externalAccessIntegrations": [
         "ALLOW_ALL_EAI"
       ],
