@@ -749,13 +749,20 @@ if (!requireNamespace("adbcdrivermanager", quietly = TRUE)) {
     message("adbcdrivermanager already installed")
 }
 
-# Install adbi (DBI-compliant ADBC interface for dplyr/dbplyr)
-if (!requireNamespace("adbi", quietly = TRUE)) {
-    message("Installing adbi from CRAN (enables dplyr with ADBC)...")
-    install.packages("adbi", repos = "https://cloud.r-project.org", quiet = TRUE)
-} else {
-    message("adbi already installed")
-}
+# NOTE: adbi installation disabled (2026-02)
+# The adbi package requires GetParameterSchema from the ADBC driver, which 
+# adbcsnowflake does not yet implement. See:
+# - https://github.com/tidyverse/dbplyr/issues/1787 (dbplyr ADBC backend)
+# - https://github.com/apache/arrow-adbc (Snowflake driver updates)
+#
+# Uncomment when the ecosystem is ready:
+# if (!requireNamespace("adbi", quietly = TRUE)) {
+#     message("Installing adbi from CRAN (enables dplyr with ADBC)...")
+#     install.packages("adbi", repos = "https://cloud.r-project.org", quiet = TRUE)
+# } else {
+#     message("adbi already installed")
+# }
+message("adbi: SKIPPED (blocked by adbcsnowflake missing GetParameterSchema)")
 
 # Install adbcsnowflake from R-multiverse (requires Go)
 if (!requireNamespace("adbcsnowflake", quietly = TRUE)) {
