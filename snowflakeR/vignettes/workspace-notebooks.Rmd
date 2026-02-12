@@ -95,18 +95,11 @@ After this, any cell starting with `%%R` executes as R code.
 ```r
 %%R
 # Suppress interactive prompts (Workspace Notebooks have no stdin)
-options(
-  repos = c(CRAN = "https://cloud.r-project.org"),
-  install.packages.check.source = "no",
-  menu.graphics = FALSE
-)
+options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-# Install from GitHub (if network access is available)
-install.packages("pak", quiet = TRUE)
+# Install from GitHub
+install.packages("pak", type = "source", quiet = TRUE)
 pak::pak("Snowflake-Labs/snowflakeR", ask = FALSE, upgrade = FALSE)
-
-# Or from local source (if you cloned the repo)
-# install.packages("/path/to/snowflakeR", repos = NULL, type = "source")
 
 library(snowflakeR)
 ```
