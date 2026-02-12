@@ -37,17 +37,46 @@ bidirectional bridge is transparent -- you just write R code.
 
 ## Setup
 
+`snowflakeR` ships a **self-contained `notebooks/` directory** with all the
+scripts, config, and helpers needed. Upload the folder contents to your
+Workspace, then follow the steps below.
+
+To find the directory after installing the package:
+
+```r
+system.file("notebooks", package = "snowflakeR")
+```
+
+### Step 0: Configure execution context
+
+Workspace Notebooks do
+[not auto-set database or schema](https://docs.snowflake.com/en/user-guide/ui-snowsight/notebooks-in-workspaces/notebooks-in-workspaces-edit-run#set-the-execution-context).
+Copy `notebook_config.yaml.template` to `notebook_config.yaml` and set your
+warehouse, database, and schema:
+
+```yaml
+context:
+  warehouse: "MY_WAREHOUSE"
+  database: "MY_DATABASE"
+  schema: "MY_SCHEMA"
+```
+
+All notebooks read this file. Table references use fully qualified names
+(`DATABASE.SCHEMA.TABLE`) via `sfr_fqn()`.
+
 ### Step 1: Install the R environment
 
 Workspace Notebooks run in containers without R pre-installed. Use the
-setup script (included in the `r_notebook/` directory):
+included setup script:
 
 ```python
 # Python cell -- run once per session (~3 minutes)
 !bash setup_r_environment.sh --basic
 ```
 
-This installs R, `rpy2`, and base R packages via `micromamba`.
+This installs R, `rpy2`, and base R packages via `micromamba`. The script,
+`r_packages.yaml`, and `r_helpers.py` are all included in the notebooks
+directory.
 
 ### Step 2: Register the `%%R` magic
 
@@ -65,13 +94,27 @@ After this, any cell starting with `%%R` executes as R code.
 
 ```r
 %%R
-# Install from local source (in Workspace)
-install.packages("path/to/snowflakeR", repos = NULL, type = "source")
-
-# Or from GitHub (if network access is available)
+# Install from GitHub (if network access is available)
 # install.packages("pak"); pak::pak("Snowflake-Labs/snowflakeR")
 
+# Or from local source (if you cloned the repo)
+# install.packages("/path/to/snowflakeR", repos = NULL, type = "source")
+
 library(snowflakeR)
+```
+
+### Step 4: Connect and set execution context
+
+```r
+%%R
+conn <- sfr_connect()   # auto-detects Workspace session
+
+# Load config and set USE WAREHOUSE / DATABASE / SCHEMA
+conn <- sfr_load_notebook_config(conn)
+
+# Use fully qualified names for all table operations
+sfr_fqn(conn, "MY_TABLE")
+#> "MY_DATABASE.MY_SCHEMA.MY_TABLE"
 ```
 
 ## Connecting: Auto-detection
@@ -220,9 +263,11 @@ setup_r_environment()
 
 ```r
 %%R
-# Cell 2 (R): Load and connect
+# Cell 2 (R): Load, connect, and set execution context
 library(snowflakeR)
 conn <- sfr_connect()
+conn <- sfr_load_notebook_config(conn)
+
 fs   <- sfr_feature_store(conn)
 reg  <- sfr_model_registry(conn)
 ```
@@ -252,12 +297,21 @@ predictions.head()
 
 ## Interactive notebooks
 
-For runnable notebook versions of the examples above, see the companion
-Jupyter notebooks in `r_notebook/snowflakeR/`:
+For runnable notebook versions of the examples above, see the self-contained
+`notebooks/` directory included with the package:
 
-- `quickstart.ipynb` -- Connection, queries, DBI, visualization
-- `model_registry_demo.ipynb` -- Train, register, predict, manage models
-- `feature_store_demo.ipynb` -- Entities, Feature Views, training data
+```r
+system.file("notebooks", package = "snowflakeR")
+```
+
+| Notebook | Environment | Description |
+|---|---|---|
+| `workspace_quickstart.ipynb` | Workspace | Connection, config, queries, DBI, ggplot2 |
+| `local_quickstart.ipynb` | Local (RStudio, Jupyter) | Same content, native R kernel |
+
+Both notebooks use `notebook_config.yaml` for execution context and
+`sfr_fqn()` for fully qualified table names. Upload the entire folder to
+your Workspace or copy to a local directory to get started.
 
 ## Troubleshooting
 

@@ -303,6 +303,25 @@ conn <- sfr_connect()
 Workspace Notebooks are managed Jupyter environments inside Snowflake. They
 run a **Python kernel** -- R is available via `rpy2` and `%%R` magic cells.
 
+`snowflakeR` ships a **self-contained `notebooks/` directory** with all the
+scripts, config, and helpers you need. Find it with:
+
+```r
+system.file("notebooks", package = "snowflakeR")
+```
+
+Upload the folder contents to your Workspace and open
+`workspace_quickstart.ipynb`. The directory includes:
+
+| File | Purpose |
+|---|---|
+| `setup_r_environment.sh` | Installs R + packages via micromamba |
+| `r_packages.yaml` | R package list for the setup script |
+| `r_helpers.py` | Python helpers for rpy2 / `%%R` magic setup |
+| `notebook_config.yaml.template` | Single config for warehouse, database, schema |
+| `workspace_quickstart.ipynb` | Ready-to-run Workspace demo |
+| `local_quickstart.ipynb` | Ready-to-run local demo |
+
 **Key differences from local:**
 
 | Aspect | Local | Workspace |
@@ -311,32 +330,45 @@ run a **Python kernel** -- R is available via `rpy2` and `%%R` magic cells.
 | Python/R env | You manage | Container-managed |
 | Authentication | `connections.toml` / key-pair | Auto-detected session |
 | Package install | `install.packages()` | `micromamba` + `install.packages()` |
+| Execution context | Usually set by connection | Must set explicitly ([docs](https://docs.snowflake.com/en/user-guide/ui-snowsight/notebooks-in-workspaces/notebooks-in-workspaces-edit-run#set-the-execution-context)) |
 | Plotting | Native plot pane | `%%R -w W -h H` + `print(p)` |
 | Session lifecycle | Persistent | Re-setup each session |
 
 **Setup steps:**
 
-1. **Install R** (run once per session, ~3 minutes):
+1. **Copy config:** `cp notebook_config.yaml.template notebook_config.yaml`
+   and edit with your warehouse, database, and schema.
+
+2. **Install R** (run once per session, ~3 minutes):
 
 ```python
 # Python cell
 !bash setup_r_environment.sh --basic
 ```
 
-2. **Register `%%R` magic**:
+3. **Register `%%R` magic:**
 
 ```python
 from r_helpers import setup_r_environment
 result = setup_r_environment()
 ```
 
-3. **Install and load `snowflakeR`**:
+4. **Install and load `snowflakeR`:**
 
 ```r
 %%R
-install.packages("path/to/snowflakeR", repos = NULL, type = "source")
+# install.packages("pak"); pak::pak("Snowflake-Labs/snowflakeR")
 library(snowflakeR)
-conn <- sfr_connect()   # auto-detects Workspace session -- no credentials needed
+conn <- sfr_connect()   # auto-detects Workspace session
+
+# Load config and set execution context
+conn <- sfr_load_notebook_config(conn)
+```
+
+All table references should use fully qualified names via `sfr_fqn()`:
+
+```r
+sfr_write_table(conn, sfr_fqn(conn, "MY_TABLE"), my_data)
 ```
 
 See `vignette("workspace-notebooks")` for the full Workspace guide including

@@ -86,6 +86,42 @@ fs  <- sfr_feature_store(conn)
 
 The package also provides `rprint()`, `rview()`, `rglimpse()`, and `rcat()` helpers for rich output rendering in Workspace cells. See `vignette("workspace-notebooks")` for setup instructions, PAT management, and tips for the dual local/Workspace workflow.
 
+> **Note:** Workspace Notebooks do [not auto-set database or schema](https://docs.snowflake.com/en/user-guide/ui-snowsight/notebooks-in-workspaces/notebooks-in-workspaces-edit-run#set-the-execution-context).
+> `snowflakeR` provides `sfr_load_notebook_config()` to set execution context
+> from a single YAML file, and `sfr_fqn()` to build fully qualified table
+> names (`DATABASE.SCHEMA.TABLE`). See the example notebooks below.
+
+## Example Notebooks
+
+`snowflakeR` ships with a **self-contained `notebooks/` directory** that has
+everything you need to get started, including setup scripts, config template,
+and Python helpers:
+
+```r
+# Find the notebooks directory in the installed package
+system.file("notebooks", package = "snowflakeR")
+
+# Or copy the entire folder to your working directory
+nb_dir <- system.file("notebooks", package = "snowflakeR")
+file.copy(list.files(nb_dir, full.names = TRUE), ".", recursive = TRUE)
+```
+
+For **Workspace Notebooks**, upload the folder contents to your Workspace and
+open `workspace_quickstart.ipynb`. For **local** environments, open
+`local_quickstart.ipynb`.
+
+| File | Purpose |
+|---|---|
+| `workspace_quickstart.ipynb` | Quickstart for Snowflake Workspace Notebooks |
+| `local_quickstart.ipynb` | Quickstart for local R environments |
+| `notebook_config.yaml.template` | Single config file for warehouse, database, schema |
+| `setup_r_environment.sh` | Installs R + packages via micromamba (Workspace only) |
+| `r_packages.yaml` | R package list for the setup script |
+| `r_helpers.py` | Python helpers for rpy2 / `%%R` magic (Workspace only) |
+
+Copy `notebook_config.yaml.template` to `notebook_config.yaml` and set your
+context before running any notebook.
+
 ## Vignettes
 
 | Vignette | Topic |
