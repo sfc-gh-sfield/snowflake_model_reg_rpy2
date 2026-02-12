@@ -303,7 +303,7 @@ setMethod("dbGetInfo", "sfr_result", function(dbObj, ...) {
 })
 
 
-# --- S3 method for dplyr::tbl (registered in .onLoad) ---
+# --- S3 methods for dplyr / dbplyr (registered in .onLoad) ---
 
 #' @noRd
 tbl.sfr_connection <- function(src, from, ...) {
@@ -313,4 +313,11 @@ tbl.sfr_connection <- function(src, from, ...) {
     )
   }
   dplyr::tbl(dbplyr::src_dbi(src), from, ...)
+}
+
+#' @noRd
+db_query_fields.sfr_connection <- function(con, sql, ...) {
+  # Run a LIMIT 0 query to discover column names without fetching data
+  df <- sfr_query(con, paste("SELECT * FROM", sql, "LIMIT 0"))
+  names(df)
 }

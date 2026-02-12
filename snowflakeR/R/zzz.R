@@ -20,6 +20,11 @@
     registerS3method("tbl", "sfr_connection", tbl.sfr_connection,
                      envir = asNamespace("dplyr"))
   }
+  if (requireNamespace("dbplyr", quietly = TRUE)) {
+    registerS3method("db_query_fields", "sfr_connection",
+                     db_query_fields.sfr_connection,
+                     envir = asNamespace("dbplyr"))
+  }
 
   invisible()
 }
