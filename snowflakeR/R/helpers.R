@@ -6,16 +6,22 @@
 #' Print a data.frame cleanly
 #'
 #' Bypasses extra formatting that can cause issues in Workspace Notebooks.
+#' Sets a wide print width to prevent line wrapping in notebook cells.
 #'
 #' @param x A data.frame or other printable object.
+#' @param width Integer. Print width in characters. Default: 200.
 #' @param ... Additional arguments passed to `print()`.
 #'
 #' @returns Invisibly returns `x`.
 #'
 #' @export
-rprint <- function(x, ...) {
+rprint <- function(x, width = 200L, ...) {
+  old_width <- getOption("width")
+  on.exit(options(width = old_width), add = TRUE)
+  options(width = width)
+
   if (is.data.frame(x)) {
-    print.data.frame(x, ...)
+    print.data.frame(x, right = FALSE, ...)
   } else {
     print(x, ...)
   }
@@ -27,14 +33,15 @@ rprint <- function(x, ...) {
 #'
 #' @param x A data.frame.
 #' @param n Integer. Number of rows to show. Default: 10.
+#' @param width Integer. Print width in characters. Default: 200.
 #'
 #' @returns Invisibly returns the first `n` rows.
 #'
 #' @export
-rview <- function(x, n = 10L) {
+rview <- function(x, n = 10L, width = 200L) {
   stopifnot(is.data.frame(x))
   head_df <- utils::head(x, n = n)
-  rprint(head_df)
+  rprint(head_df, width = width)
   cli::cli_text(cli::col_grey(
     "[Showing {nrow(head_df)} of {nrow(x)} rows x {ncol(x)} cols]"
   ))

@@ -9,7 +9,8 @@
   op <- options()
   op_sfr <- list(
     snowflakeR.python_env = "r-snowflakeR",
-    snowflakeR.verbose = FALSE
+    snowflakeR.verbose = FALSE,
+    snowflakeR.print_width = 200L
   )
   toset <- !(names(op_sfr) %in% names(op))
   if (any(toset)) options(op_sfr[toset])

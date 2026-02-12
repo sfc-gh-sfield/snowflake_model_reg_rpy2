@@ -30,7 +30,7 @@ set -euo pipefail
 
 # --- Configuration ---
 PRIVATE_REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-PUBLIC_REMOTE="git@github.com:Snowflake-Labs/snowflakeR.git"
+PUBLIC_REMOTE="https://github.com/Snowflake-Labs/snowflakeR.git"
 STAGING_DIR="$(mktemp -d)"
 DRY_RUN=false
 

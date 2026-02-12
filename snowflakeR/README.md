@@ -90,10 +90,11 @@ The package also provides `rprint()`, `rview()`, `rglimpse()`, and `rcat()` help
 
 | Vignette | Topic |
 |---|---|
-| `vignette("getting-started")` | Installation, connecting, queries, DBI/dbplyr |
+| `vignette("setup")` | **Prerequisites, Python setup, auth, and environment-specific config** (RStudio, VS Code, Jupyter, Workspace, Docker/CI) |
+| `vignette("getting-started")` | Connecting, queries, table ops, DBI/dbplyr |
 | `vignette("model-registry")` | Training, logging, deploying, and serving R models |
 | `vignette("feature-store")` | Entities, feature views, training data, inference |
-| `vignette("workspace-notebooks")` | Using snowflakeR inside Snowflake Workspace Notebooks |
+| `vignette("workspace-notebooks")` | Full guide for Snowflake Workspace Notebooks |
 
 ## Requirements
 

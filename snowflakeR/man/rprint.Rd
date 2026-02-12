@@ -4,10 +4,12 @@
 \alias{rprint}
 \title{Print a data.frame cleanly}
 \usage{
-rprint(x, ...)
+rprint(x, width = 200L, ...)
 }
 \arguments{
 \item{x}{A data.frame or other printable object.}
+
+\item{width}{Integer. Print width in characters. Default: 200.}
 
 \item{...}{Additional arguments passed to \code{print()}.}
 }
@@ -16,4 +18,5 @@ Invisibly returns \code{x}.
 }
 \description{
 Bypasses extra formatting that can cause issues in Workspace Notebooks.
+Sets a wide print width to prevent line wrapping in notebook cells.
 }

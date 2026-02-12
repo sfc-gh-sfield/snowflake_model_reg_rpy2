@@ -174,7 +174,7 @@ sfr_connect <- function(name = NULL,
     cli::cli_inform("Connected to Snowflake account {.val {account}}.")
   }
 
-  structure(
+  conn <- structure(
     list(
       session = session,
       account = account,
@@ -189,6 +189,23 @@ sfr_connect <- function(name = NULL,
     ),
     class = c("sfr_connection", "list")
   )
+
+  # Refresh from live session to fill any NULLs
+  conn <- refresh_conn_from_session(conn)
+
+  # Warn about unset context values
+  missing <- character(0)
+  if (is.null(conn$warehouse)) missing <- c(missing, "warehouse")
+  if (is.null(conn$database))  missing <- c(missing, "database")
+  if (is.null(conn$schema))    missing <- c(missing, "schema")
+  if (length(missing) > 0) {
+    cli::cli_warn(c(
+      "!" = "The following are not set on this session: {.val {missing}}.",
+      "i" = "Use {.fn sfr_use} to set them: {.code conn <- sfr_use(conn, {missing[1]} = \"...\")}"
+    ))
+  }
+
+  conn
 }
 
 
@@ -266,11 +283,16 @@ sfr_status <- function(conn) {
 
 #' Switch warehouse, database, or schema
 #'
+#' Runs `USE WAREHOUSE/DATABASE/SCHEMA` on the Snowpark session and updates
+#' the connection object. **Important:** R objects are pass-by-value, so you
+#' must reassign the result: `conn <- sfr_use(conn, schema = "NEW")`.
+#'
 #' @param conn An `sfr_connection` object.
 #' @param warehouse Character. New warehouse name.
 #' @param database Character. New database name.
 #' @param schema Character. New schema name.
-#' @returns The modified `sfr_connection` object (invisibly).
+#' @returns The updated `sfr_connection` object (invisibly). You **must**
+#'   reassign: `conn <- sfr_use(conn, ...)`.
 #'
 #' @export
 sfr_use <- function(conn, warehouse = NULL, database = NULL, schema = NULL) {
@@ -279,18 +301,47 @@ sfr_use <- function(conn, warehouse = NULL, database = NULL, schema = NULL) {
 
   if (!is.null(warehouse)) {
     session$sql(paste0("USE WAREHOUSE ", warehouse))$collect()
-    conn$warehouse <- warehouse
   }
   if (!is.null(database)) {
     session$sql(paste0("USE DATABASE ", database))$collect()
-    conn$database <- database
   }
   if (!is.null(schema)) {
     session$sql(paste0("USE SCHEMA ", schema))$collect()
-    conn$schema <- schema
   }
 
+  # Refresh R-side fields from the actual session state
+  conn <- refresh_conn_from_session(conn)
+
   invisible(conn)
+}
+
+
+#' Refresh connection object fields from the live Snowpark session
+#'
+#' Queries the session for current warehouse, database, schema, and role.
+#' This ensures the R-side `conn` object matches the actual session state.
+#'
+#' @param conn An `sfr_connection` object.
+#' @returns The updated `sfr_connection` object.
+#' @noRd
+refresh_conn_from_session <- function(conn) {
+  session <- conn$session
+
+  # Query the session for current context values
+  # These methods return quoted identifiers; strip quotes
+  strip_quotes <- function(x) {
+    if (is.null(x) || length(x) == 0) return(NULL)
+    val <- tryCatch(as.character(x), error = function(e) NULL)
+    if (is.null(val) || val == "" || val == "None") return(NULL)
+    gsub('^"|"$', '', val)
+  }
+
+  conn$warehouse <- strip_quotes(tryCatch(session$get_current_warehouse(), error = function(e) NULL))
+  conn$database  <- strip_quotes(tryCatch(session$get_current_database(), error = function(e) NULL))
+  conn$schema    <- strip_quotes(tryCatch(session$get_current_schema(), error = function(e) NULL))
+  conn$role      <- strip_quotes(tryCatch(session$get_current_role(), error = function(e) NULL))
+
+  conn
 }
 
 

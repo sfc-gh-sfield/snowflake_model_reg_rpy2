@@ -16,8 +16,11 @@ sfr_use(conn, warehouse = NULL, database = NULL, schema = NULL)
 \item{schema}{Character. New schema name.}
 }
 \value{
-The modified \code{sfr_connection} object (invisibly).
+The updated \code{sfr_connection} object (invisibly). You \strong{must}
+reassign: \code{conn <- sfr_use(conn, ...)}.
 }
 \description{
-Switch warehouse, database, or schema
+Runs \verb{USE WAREHOUSE/DATABASE/SCHEMA} on the Snowpark session and updates
+the connection object. \strong{Important:} R objects are pass-by-value, so you
+must reassign the result: \code{conn <- sfr_use(conn, schema = "NEW")}.
 }

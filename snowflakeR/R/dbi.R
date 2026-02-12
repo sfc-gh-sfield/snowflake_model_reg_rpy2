@@ -47,8 +47,25 @@ sfr_list_tables <- function(conn, database = NULL, schema = NULL) {
   db <- database %||% conn$database
   sc <- schema %||% conn$schema
 
+  # If still NULL, try to get from the live session
+  if (is.null(db)) {
+    db <- tryCatch({
+      val <- as.character(conn$session$get_current_database())
+      gsub('^"|"$', '', val)
+    }, error = function(e) NULL)
+  }
+  if (is.null(sc)) {
+    sc <- tryCatch({
+      val <- as.character(conn$session$get_current_schema())
+      gsub('^"|"$', '', val)
+    }, error = function(e) NULL)
+  }
+
   if (is.null(db) || is.null(sc)) {
-    cli::cli_abort("Both {.arg database} and {.arg schema} are required.")
+    cli::cli_abort(c(
+      "Both {.arg database} and {.arg schema} are required.",
+      "i" = "Set them with: {.code conn <- sfr_use(conn, database = \"...\", schema = \"...\")}"
+    ))
   }
 
   sql <- sprintf(

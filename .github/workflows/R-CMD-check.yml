@@ -22,7 +22,7 @@ jobs:
       fail-fast: false
       matrix:
         config:
-          - {os: ubuntu-latest,  r: '4.3.1'}
+          - {os: ubuntu-latest,  r: '4.4'}
           - {os: ubuntu-latest,  r: 'release'}
           - {os: macos-latest,   r: 'release'}
 
@@ -39,6 +39,8 @@ jobs:
           r-version: ${{ matrix.config.r }}
           use-public-rspm: true
 
+      - uses: r-lib/actions/setup-pandoc@v2
+
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -50,10 +52,11 @@ jobs:
           pip install snowflake-ml-python snowflake-snowpark-python
 
       # Install R package dependencies (including Suggests except snowflakeauth)
+      # In the public repo, the package is at the repo root (not snowflakeR/)
       - name: Install R dependencies
         run: |
           install.packages(c("remotes", "rcmdcheck"))
-          remotes::install_deps("snowflakeR", dependencies = TRUE)
+          remotes::install_deps(".", dependencies = TRUE)
         shell: Rscript {0}
 
       # Point reticulate at the system Python (not a venv)
@@ -65,16 +68,16 @@ jobs:
       # Run the test suite
       - name: Run tests
         run: |
-          devtools::test("snowflakeR")
+          testthat::test_local(".", reporter = "summary")
         shell: Rscript {0}
 
       # Full R CMD check
       - name: R CMD check
         run: |
           rcmdcheck::rcmdcheck(
-            path = "snowflakeR",
+            path = ".",
             args = c("--no-manual", "--as-cran"),
-            error_on = "warning",
+            error_on = "error",
             check_dir = "check"
           )
         shell: Rscript {0}

@@ -4,12 +4,14 @@
 \alias{rview}
 \title{View the head of a data.frame}
 \usage{
-rview(x, n = 10L)
+rview(x, n = 10L, width = 200L)
 }
 \arguments{
 \item{x}{A data.frame.}
 
 \item{n}{Integer. Number of rows to show. Default: 10.}
+
+\item{width}{Integer. Print width in characters. Default: 200.}
 }
 \value{
 Invisibly returns the first \code{n} rows.
