@@ -4,13 +4,13 @@ Snowflake Datasets Python Bridge
 Called from R via reticulate. Wraps snowflake.ml.dataset.Dataset.
 """
 
-import json
 from typing import Any, Dict, List, Optional
 
 
 def _pandas_to_r_dict(pdf):
     """Convert a pandas DataFrame to a column-oriented dict with native Python
-    types via JSON round-trip.  This avoids NumPy ABI issues with reticulate."""
+    types via Series.tolist().  This avoids NumPy ABI issues with reticulate
+    and is more efficient than the previous JSON round-trip approach."""
     _NA = "NA_SENTINEL_"
     clean_cols = [c.strip('"') for c in pdf.columns]
     pdf.columns = clean_cols
@@ -20,11 +20,14 @@ def _pandas_to_r_dict(pdf):
     if nrows == 0:
         return {"columns": cols, "data": {c: [] for c in cols}, "nrows": 0}
 
-    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
     data = {}
     for col in cols:
-        vals = [r.get(col) for r in records]
-        data[col] = [v if v is not None else _NA for v in vals]
+        na_mask = pdf[col].isna()
+        vals = pdf[col].tolist()
+        if na_mask.any():
+            data[col] = [_NA if is_na else v for v, is_na in zip(vals, na_mask)]
+        else:
+            data[col] = vals
 
     return {"columns": cols, "data": data, "nrows": nrows}
 

@@ -7,6 +7,11 @@
 # Internal: convert the dict returned by Python _pandas_to_r_dict / query_to_dict
 # back into an R data.frame.  Handles NA sentinels and optional numeric coercion.
 #
+# The Python side uses Series.tolist() to convert numpy arrays to native
+# Python types, avoiding the NumPy 1.x/2.x ABI mismatch with reticulate.
+# For large datasets, an Apache Arrow IPC transfer path would be faster --
+# see TODO.md for the roadmap item.
+#
 # @param result  A list with `$columns`, `$data`, `$nrows` (from the Python bridge).
 # @param lowercase Logical. Lowercase column names? Default TRUE.
 # @returns A data.frame.

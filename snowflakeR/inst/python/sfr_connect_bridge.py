@@ -8,7 +8,7 @@ Handles Snowpark session creation, active session detection
 for Workspace Notebooks, and robust pandas → R data conversion.
 """
 
-import json
+
 import os
 from typing import Optional
 
@@ -126,10 +126,10 @@ def pandas_to_r_dict(pdf):
     Convert a pandas DataFrame to a column-oriented Python dict
     with native Python types (no numpy arrays).
 
-    The NumPy 1.x / 2.x ABI break can cause reticulate to leave
-    numpy.ndarray objects unconverted when going pandas → R.
-    This function round-trips through JSON to guarantee native
-    Python floats/ints/strings that reticulate always handles.
+    Uses Series.tolist() which converts numpy scalars to native
+    Python types (int, float, str) inside NumPy's own C code,
+    avoiding the NumPy 1.x/2.x ABI mismatch that occurs when
+    reticulate tries to read numpy arrays directly.
 
     Args:
         pdf: A pandas DataFrame.
@@ -137,9 +137,8 @@ def pandas_to_r_dict(pdf):
     Returns:
         dict[str, list]: Column name → list of native Python values.
     """
-    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
     cols = list(pdf.columns)
-    return {col: [r.get(col) for r in records] for col in cols}
+    return {col: pdf[col].tolist() for col in cols}
 
 
 def query_to_dict(session, sql):
@@ -178,12 +177,17 @@ def query_to_dict(session, sql):
     if nrows == 0:
         return {"columns": cols, "data": {c: [] for c in cols}, "nrows": 0}
 
-    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
+    # Use .tolist() to convert numpy scalars to native Python types
+    # (int, float, str).  This avoids the NumPy ABI mismatch because
+    # reticulate never sees numpy array objects.
+    # pd.isna() detects all flavours of missing (None, NaN, NaT, pd.NA).
     data = {}
     for col in cols:
-        vals = [r.get(col) for r in records]
-        # Replace None with sentinel so R sees a uniform-length character
-        # vector rather than a list of NULLs (which collapses to length 0).
-        data[col] = [v if v is not None else _NA for v in vals]
+        na_mask = pdf[col].isna()
+        vals = pdf[col].tolist()
+        if na_mask.any():
+            data[col] = [_NA if is_na else v for v, is_na in zip(vals, na_mask)]
+        else:
+            data[col] = vals
 
     return {"columns": cols, "data": data, "nrows": nrows}
