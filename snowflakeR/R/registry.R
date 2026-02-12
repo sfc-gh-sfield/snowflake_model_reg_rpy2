@@ -662,3 +662,211 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
   cli::cli_inform("Service {.val {service_name}} removed.")
   invisible(TRUE)
 }
+
+
+#' Wait for an SPCS service to be ready
+#'
+#' Polls the service status until it reaches `RUNNING` or a timeout is hit.
+#' Useful after [sfr_deploy_model()] since SPCS services take several minutes
+#' to provision.
+#'
+#' @param conn An `sfr_connection` object.
+#' @param service_name Character. Name of the SPCS service.
+#' @param timeout_min Numeric. Maximum minutes to wait. Default: 10.
+#' @param poll_sec Numeric. Seconds between status checks. Default: 15.
+#' @param verbose Logical. Print status updates? Default: `TRUE`.
+#'
+#' @returns `TRUE` (invisibly) if the service is running; raises an error on
+#'   timeout.
+#'
+#' @examples
+#' \dontrun{
+#' sfr_deploy_model(reg, "MY_MODEL", "V1", "my_svc", "ML_POOL", "my_repo")
+#' sfr_wait_for_service(conn, "my_svc", timeout_min = 15)
+#' }
+#'
+#' @export
+sfr_wait_for_service <- function(conn,
+                                 service_name,
+                                 timeout_min = 10,
+                                 poll_sec = 15,
+                                 verbose = TRUE) {
+  validate_connection(conn)
+  stopifnot(is.character(service_name), length(service_name) == 1)
+
+  deadline <- Sys.time() + timeout_min * 60
+  attempt <- 0L
+
+  if (verbose) {
+    cli::cli_inform(c(
+      "i" = "Waiting for service {.val {service_name}} (timeout: {timeout_min} min) ..."
+    ))
+  }
+
+  start_time <- Sys.time()
+
+  repeat {
+    attempt <- attempt + 1L
+    # Query service status
+    status_df <- tryCatch(
+      sfr_query(conn, paste0("SHOW SERVICES LIKE '", service_name, "'")),
+      error = function(e) NULL
+    )
+
+    current <- if (!is.null(status_df) && nrow(status_df) > 0) {
+      # Column name may vary (status or STATUS) -- use tolower
+      status_col <- intersect(c("status"), tolower(names(status_df)))
+      if (length(status_col) > 0) {
+        as.character(status_df[[status_col[1]]][1])
+      } else {
+        "UNKNOWN"
+      }
+    } else {
+      "NOT_FOUND"
+    }
+
+    elapsed_min <- round(as.numeric(difftime(
+      Sys.time(), start_time, units = "mins"
+    )), 1)
+
+    if (verbose) {
+      cli::cli_inform("  [{elapsed_min} min] Status: {.val {current}}")
+    }
+
+    if (toupper(current) == "RUNNING") {
+      if (verbose) {
+        cli::cli_inform(c("v" = "Service {.val {service_name}} is running."))
+      }
+      return(invisible(TRUE))
+    }
+
+    if (toupper(current) %in% c("FAILED", "DELETING", "DELETED")) {
+      cli::cli_abort(c(
+        "x" = "Service {.val {service_name}} entered state {.val {current}}.",
+        "i" = "Check service logs for details."
+      ))
+    }
+
+    if (Sys.time() >= deadline) {
+      cli::cli_abort(c(
+        "x" = "Timeout ({timeout_min} min) waiting for service {.val {service_name}}.",
+        "i" = "Last status: {.val {current}}.",
+        "i" = "Increase {.arg timeout_min} or check SPCS logs."
+      ))
+    }
+
+    Sys.sleep(poll_sec)
+  }
+}
+
+
+#' Benchmark SPCS model inference
+#'
+#' Runs `n` inference requests against a deployed SPCS service and reports
+#' timing statistics. Use this to validate that the service is responding
+#' correctly and to measure throughput.
+#'
+#' @param reg An `sfr_model_registry` or `sfr_connection` object.
+#' @param model_name Character. Registered model name.
+#' @param new_data A data.frame with input data.
+#' @param service_name Character. SPCS service name.
+#' @param n Integer. Number of inference iterations. Default: 10.
+#' @param version_name Character. Model version (default: model's default).
+#' @param verbose Logical. Print per-iteration results? Default: `TRUE`.
+#'
+#' @returns A list (invisibly) with:
+#'   - `timings`: numeric vector of per-iteration seconds
+#'   - `mean_sec`: mean latency
+#'   - `median_sec`: median latency
+#'   - `min_sec`, `max_sec`: range
+#'   - `total_sec`: total wall time
+#'   - `n`: iterations completed
+#'   - `last_result`: data.frame from the last prediction
+#'
+#' @examples
+#' \dontrun{
+#' bench <- sfr_benchmark_inference(
+#'   reg, "MY_MODEL", test_data,
+#'   service_name = "my_svc", n = 20
+#' )
+#' }
+#'
+#' @export
+sfr_benchmark_inference <- function(reg,
+                                    model_name,
+                                    new_data,
+                                    service_name,
+                                    n = 10L,
+                                    version_name = NULL,
+                                    verbose = TRUE) {
+  stopifnot(is.data.frame(new_data), is.numeric(n), n >= 1)
+  n <- as.integer(n)
+
+  if (verbose) {
+    cli::cli_inform(c(
+      "i" = "Running {n} inference iterations against service {.val {service_name}} ..."
+    ))
+  }
+
+  timings <- numeric(n)
+  last_result <- NULL
+
+  for (i in seq_len(n)) {
+    t0 <- proc.time()["elapsed"]
+
+    result <- tryCatch(
+      sfr_predict(
+        reg,
+        model_name = model_name,
+        new_data = new_data,
+        version_name = version_name,
+        service_name = service_name
+      ),
+      error = function(e) {
+        cli::cli_warn("Iteration {i}/{n} failed: {conditionMessage(e)}")
+        NULL
+      }
+    )
+
+    t1 <- proc.time()["elapsed"]
+    timings[i] <- t1 - t0
+
+    if (!is.null(result)) {
+      last_result <- result
+    }
+
+    if (verbose) {
+      status <- if (!is.null(result)) "OK" else "FAIL"
+      cli::cli_inform(
+        "  [{i}/{n}] {status} -- {round(timings[i], 3)}s"
+      )
+    }
+  }
+
+  # Compute stats (exclude failed iterations for stats)
+  successful <- timings[timings > 0]
+  stats <- list(
+    timings    = timings,
+    mean_sec   = mean(successful),
+    median_sec = stats::median(successful),
+    min_sec    = min(successful),
+    max_sec    = max(successful),
+    total_sec  = sum(timings),
+    n          = n,
+    last_result = last_result
+  )
+
+  if (verbose) {
+    cli::cli_rule("Benchmark Results")
+    cli::cli_inform(c(
+      "i" = "Iterations: {n}",
+      "i" = "Mean:   {round(stats$mean_sec, 3)}s",
+      "i" = "Median: {round(stats$median_sec, 3)}s",
+      "i" = "Min:    {round(stats$min_sec, 3)}s",
+      "i" = "Max:    {round(stats$max_sec, 3)}s",
+      "i" = "Total:  {round(stats$total_sec, 1)}s"
+    ))
+  }
+
+  invisible(stats)
+}
