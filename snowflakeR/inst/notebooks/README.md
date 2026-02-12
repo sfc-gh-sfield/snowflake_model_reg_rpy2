@@ -1,35 +1,58 @@
 # snowflakeR Notebooks
 
 Interactive Jupyter notebooks demonstrating the `snowflakeR` package.
+This directory is **self-contained** -- everything you need is included.
 
-## Before you start
+## Contents
 
-1. Copy the config template:
-   ```bash
-   cp notebook_config.yaml.template notebook_config.yaml
-   ```
-2. Edit `notebook_config.yaml` with your warehouse, database, schema, and
-   (for local) connection parameters.
+| File | Purpose |
+|---|---|
+| `workspace_quickstart.ipynb` | Quickstart for **Snowflake Workspace Notebooks** |
+| `local_quickstart.ipynb` | Quickstart for **local R environments** (RStudio, Jupyter, etc.) |
+| `notebook_config.yaml.template` | Configuration template (warehouse, database, schema) |
+| `setup_r_environment.sh` | Installs R + packages via micromamba (Workspace only) |
+| `r_packages.yaml` | R package list for `setup_r_environment.sh` |
+| `r_helpers.py` | Python helpers for rpy2/%%R magic setup (Workspace only) |
 
-All notebooks read this single config file to set the execution context.
+## Quick Start
+
+### 1. Configure your environment
+
+Copy the config template and edit with your values:
+
+```bash
+cp notebook_config.yaml.template notebook_config.yaml
+```
+
+Edit `notebook_config.yaml` -- at minimum, set:
+
+```yaml
+context:
+  warehouse: "MY_WAREHOUSE"
+  database: "MY_DATABASE"
+  schema: "MY_SCHEMA"
+```
+
+All notebooks read this file to set execution context.
 Table references use fully qualified names (`DATABASE.SCHEMA.TABLE`) as
-recommended by Snowflake for Workspace Notebooks.
+[recommended by Snowflake](https://docs.snowflake.com/en/user-guide/ui-snowsight/notebooks-in-workspaces/notebooks-in-workspaces-edit-run#set-the-execution-context).
 
-## Choose your environment
+### 2. Choose your environment
 
-Each topic has two versions -- pick the one that matches where you're running:
+**Workspace Notebooks** (Python kernel + `%%R` magic):
 
-| Topic | Workspace Notebook | Local (RStudio / Jupyter) |
-|---|---|---|
-| **Quickstart** | `workspace_quickstart.ipynb` | `local_quickstart.ipynb` |
+1. Upload this entire folder to your Workspace
+2. Open `workspace_quickstart.ipynb`
+3. Run the setup cells to install R and snowflakeR
+4. The notebook handles `USE WAREHOUSE/DATABASE/SCHEMA` via `sfr_load_notebook_config()`
 
-**Workspace Notebooks** run in Snowflake with a Python kernel. R code goes in
-`%%R` magic cells. Setup includes installing R via `micromamba`.
+**Local R environments** (RStudio, Posit Workbench, JupyterLab with R kernel):
 
-**Local Notebooks** use a native R kernel (IRkernel). No `%%R` magic needed.
-Requires `connections.toml` or explicit credentials.
+1. Open `local_quickstart.ipynb` (or copy cells to an R script)
+2. Ensure `snowflakeR` is installed (`pak::pak("Snowflake-Labs/snowflakeR")`)
+3. Configure `connections.toml` or set `connection:` section in `notebook_config.yaml`
 
-## Accessing notebooks
+## Accessing notebooks from an installed package
 
 After installing `snowflakeR`, find the notebooks with:
 
