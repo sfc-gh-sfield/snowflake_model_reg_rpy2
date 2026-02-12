@@ -1,0 +1,20 @@
+# =============================================================================
+# snowflakeR Notebook Configuration -- Development / Testing
+# =============================================================================
+# Tracked in the dev repo only. Excluded from the public repo by the sync
+# script. Users create their own from notebook_config.yaml.template.
+# =============================================================================
+
+context:
+  warehouse: "SIMON_XS"
+  database: "SIMON"
+  schema: "SCRATCH"
+
+connection:
+  account: "ak32940"
+  user: "SIMON"
+  auth_method: "externalbrowser"
+
+demo:
+  table_prefix: "SFR_"
+  row_limit: 1000

@@ -146,9 +146,11 @@ connection.json
 connections.toml
 
 # Notebook configuration (contains account-specific values)
-# Template is tracked: notebook_config.yaml.template
+# Template is tracked; the dev config under inst/notebooks/ is also tracked
+# (excluded from public repo via sync script)
 **/notebook_config.yaml
 !**/notebook_config.yaml.template
+!snowflakeR/inst/notebooks/notebook_config.yaml
 ~/.snowsql/
 
 # ============================

@@ -56,6 +56,7 @@ rsync -a --delete \
   --exclude='.Rhistory' \
   --exclude='.RData' \
   --exclude='__pycache__' \
+  --exclude='inst/notebooks/notebook_config.yaml' \
   "$PRIVATE_REPO_DIR/snowflakeR/" \
   "$STAGING_DIR/"
 
