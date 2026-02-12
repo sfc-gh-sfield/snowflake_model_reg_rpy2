@@ -187,7 +187,7 @@ sfr_connect <- function(name = NULL,
       environment = env_type,
       created_at = Sys.time()
     ),
-    class = c("sfr_connection", "list")
+    class = c("sfr_connection", "DBIConnection", "list")
   )
 
   # Refresh from live session to fill any NULLs
