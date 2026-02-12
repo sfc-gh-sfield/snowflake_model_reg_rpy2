@@ -104,10 +104,8 @@ def _make_feature_view(
         refresh_freq=refresh_freq,
         timestamp_col=timestamp_col,
         desc=desc or "",
+        warehouse=warehouse,
     )
-
-    if warehouse:
-        fv = fv.attach_feature_desc({"warehouse": warehouse})
 
     return fv
 
