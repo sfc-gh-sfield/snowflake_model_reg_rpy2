@@ -90,26 +90,48 @@ print(f"R {result['r_version']} ready. %%R magic: {result['magic_registered']}")
 
 After this, any cell starting with `%%R` executes as R code.
 
-### Step 3: Install and load snowflakeR
+### Step 3: Resolve the snowflakeR package path
+
+Use a Python cell to resolve the absolute path to the `snowflakeR` directory
+and export it as an environment variable so R can access it:
+
+```python
+import os
+snowflaker_path = os.path.join(os.getcwd(), "snowflakeR")
+print(f"snowflakeR path: {snowflaker_path}")
+assert os.path.isfile(os.path.join(snowflaker_path, "DESCRIPTION")), \
+    f"DESCRIPTION not found in {snowflaker_path}"
+
+os.environ["SNOWFLAKER_PATH"] = snowflaker_path
+```
+
+### Step 4: Install and load snowflakeR
 
 ```r
 %%R
 # Suppress interactive prompts (Workspace Notebooks have no stdin)
 options(repos = c(CRAN = "https://cloud.r-project.org"))
 
-# Install snowflakeR -- uncomment ONE option:
+if (!requireNamespace("snowflakeR", quietly = TRUE)) {
+  # Install required dependencies from CRAN first (repos=NULL skips CRAN)
+  deps <- c("reticulate", "cli", "rlang")
+  for (pkg in deps) {
+    if (!requireNamespace(pkg, quietly = TRUE))
+      install.packages(pkg, type = "source", quiet = TRUE)
+  }
 
-# Option 1: Install from local repo cloned into the Workspace
-install.packages("/path/to/snowflakeR", repos = NULL, type = "source")
+  # Option 1: Install from local repo cloned into the Workspace
+  # (absolute path resolved in the previous Python cell via env var)
+  install.packages(Sys.getenv("SNOWFLAKER_PATH"), repos = NULL, type = "source")
 
-# Option 2: Install from GitHub via pak (once published to public repo)
-# install.packages("pak", type = "source", quiet = TRUE)
-# pak::pak("Snowflake-Labs/snowflakeR", ask = FALSE, upgrade = FALSE)
-
+  # Option 2: Install from GitHub via pak (once published to public repo)
+  # install.packages("pak", type = "source", quiet = TRUE)
+  # pak::pak("Snowflake-Labs/snowflakeR", ask = FALSE, upgrade = FALSE)
+}
 library(snowflakeR)
 ```
 
-### Step 4: Connect and set execution context
+### Step 5: Connect and set execution context
 
 ```r
 %%R
