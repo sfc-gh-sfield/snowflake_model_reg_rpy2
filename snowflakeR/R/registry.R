@@ -124,8 +124,8 @@ resolve_registry_context <- function(reg) {
 #' @param conda_deps Character vector. Conda packages for the model
 #'   environment. Defaults include `r-base` and `rpy2`.
 #' @param pip_requirements Character vector. Additional pip packages.
-#' @param target_platforms Character. One of `"SNOWPARK_CONTAINER_SERVICES"`,
-#'   `"WAREHOUSE"`, or both. Default: `"SNOWPARK_CONTAINER_SERVICES"`.
+#' @param target_platforms Character. One of `"WAREHOUSE"`,
+#'   `"SNOWPARK_CONTAINER_SERVICES"`, or both. Default: `"WAREHOUSE"`.
 #' @param comment Character. Description of the model.
 #' @param metrics Named list. Metrics to attach to the model version.
 #' @param sample_input A data.frame. Optional sample input for signature
@@ -158,7 +158,7 @@ sfr_log_model <- function(reg,
                           output_cols = NULL,
                           conda_deps = NULL,
                           pip_requirements = NULL,
-                          target_platforms = "SNOWPARK_CONTAINER_SERVICES",
+                          target_platforms = "WAREHOUSE",
                           comment = NULL,
                           metrics = NULL,
                           sample_input = NULL,

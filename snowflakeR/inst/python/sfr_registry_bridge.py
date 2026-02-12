@@ -342,7 +342,7 @@ def registry_log_model(
     if predict_packages is None:
         predict_packages = []
     if target_platforms is None:
-        target_platforms = ["SNOWPARK_CONTAINER_SERVICES"]
+        target_platforms = ["WAREHOUSE"]
     if conda_dependencies is None:
         conda_dependencies = ["r-base>=4.1", "rpy2>=3.5"]
 
