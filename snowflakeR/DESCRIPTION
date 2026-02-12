@@ -22,6 +22,7 @@ Depends:
     R (>= 4.1.0)
 Imports:
     methods,
+    DBI,
     reticulate (>= 1.34),
     cli,
     rlang
@@ -30,7 +31,6 @@ Suggests:
     testthat (>= 3.0.0),
     dplyr,
     dbplyr,
-    DBI,
     arrow,
     knitr,
     rmarkdown,

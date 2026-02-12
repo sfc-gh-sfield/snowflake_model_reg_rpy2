@@ -15,12 +15,6 @@
   toset <- !(names(op_sfr) %in% names(op))
   if (any(toset)) options(op_sfr[toset])
 
-  # Register DBI S4 methods when DBI is available
-  # DBI uses S4 generics, so we need setMethod() -- not registerS3method()
-  if (requireNamespace("DBI", quietly = TRUE)) {
-    register_dbi_methods()
-  }
-
   invisible()
 }
 

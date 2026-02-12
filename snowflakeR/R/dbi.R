@@ -183,33 +183,32 @@ sfr_write_table <- function(conn, table_name, value, overwrite = FALSE) {
 # Bridge the S3 class into S4 so DBI generics can dispatch on it
 setOldClass(c("sfr_connection", "list"))
 
-# Internal: called from .onLoad() in zzz.R when DBI is available
-register_dbi_methods <- function() {
-  setMethod("dbGetQuery", signature(conn = "sfr_connection"),
-            function(conn, statement, ...) sfr_query(conn, statement))
+# S4 method definitions — DBI is now in Imports, so generics are always available
 
-  setMethod("dbExecute", signature(conn = "sfr_connection"),
-            function(conn, statement, ...) sfr_execute(conn, statement))
+setMethod("dbGetQuery", signature(conn = "sfr_connection"),
+          function(conn, statement, ...) sfr_query(conn, statement))
 
-  setMethod("dbListTables", signature(conn = "sfr_connection"),
-            function(conn, ...) sfr_list_tables(conn, ...))
+setMethod("dbExecute", signature(conn = "sfr_connection"),
+          function(conn, statement, ...) sfr_execute(conn, statement))
 
-  setMethod("dbListFields", signature(conn = "sfr_connection"),
-            function(conn, name, ...) {
-              fields <- sfr_list_fields(conn, name)
-              as.character(fields$name)
-            })
+setMethod("dbListTables", signature(conn = "sfr_connection"),
+          function(conn, ...) sfr_list_tables(conn, ...))
 
-  setMethod("dbExistsTable", signature(conn = "sfr_connection"),
-            function(conn, name, ...) sfr_table_exists(conn, name))
+setMethod("dbListFields", signature(conn = "sfr_connection"),
+          function(conn, name, ...) {
+            fields <- sfr_list_fields(conn, name)
+            as.character(fields$name)
+          })
 
-  setMethod("dbDisconnect", signature(conn = "sfr_connection"),
-            function(conn, ...) sfr_disconnect(conn))
+setMethod("dbExistsTable", signature(conn = "sfr_connection"),
+          function(conn, name, ...) sfr_table_exists(conn, name))
 
-  setMethod("dbReadTable", signature(conn = "sfr_connection"),
-            function(conn, name, ...) sfr_read_table(conn, name))
+setMethod("dbDisconnect", signature(conn = "sfr_connection"),
+          function(conn, ...) sfr_disconnect(conn))
 
-  setMethod("dbWriteTable", signature(conn = "sfr_connection"),
-            function(conn, name, value, ..., overwrite = FALSE)
-              sfr_write_table(conn, name, value, overwrite = overwrite))
-}
+setMethod("dbReadTable", signature(conn = "sfr_connection"),
+          function(conn, name, ...) sfr_read_table(conn, name))
+
+setMethod("dbWriteTable", signature(conn = "sfr_connection"),
+          function(conn, name, value, ..., overwrite = FALSE)
+            sfr_write_table(conn, name, value, overwrite = overwrite))
