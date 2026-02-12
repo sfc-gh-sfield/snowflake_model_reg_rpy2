@@ -15,6 +15,12 @@
   toset <- !(names(op_sfr) %in% names(op))
   if (any(toset)) options(op_sfr[toset])
 
+  # Register S3 methods for generics in Suggests packages
+  if (requireNamespace("dplyr", quietly = TRUE)) {
+    registerS3method("tbl", "sfr_connection", tbl.sfr_connection,
+                     envir = asNamespace("dplyr"))
+  }
+
   invisible()
 }
 

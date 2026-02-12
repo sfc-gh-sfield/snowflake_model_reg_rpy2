@@ -180,10 +180,16 @@ sfr_write_table <- function(conn, table_name, value, overwrite = FALSE) {
 # This avoids a hard dependency on DBI (which is in Suggests) while still
 # enabling standard R database tooling (dbplyr, etc.).
 
-# Bridge the S3 class into S4 so DBI generics can dispatch on it
+# Bridge S3 classes into S4 so DBI generics can dispatch on them
 setOldClass(c("sfr_connection", "list"))
+setOldClass(c("sfr_result", "list"))
 
-# S4 method definitions — DBI is now in Imports, so generics are always available
+
+# =============================================================================
+# S4 method definitions — DBI is in Imports, generics are always available
+# =============================================================================
+
+# --- Core query / table methods ---
 
 setMethod("dbGetQuery", signature(conn = "sfr_connection"),
           function(conn, statement, ...) sfr_query(conn, statement))
@@ -212,3 +218,99 @@ setMethod("dbReadTable", signature(conn = "sfr_connection"),
 setMethod("dbWriteTable", signature(conn = "sfr_connection"),
           function(conn, name, value, ..., overwrite = FALSE)
             sfr_write_table(conn, name, value, overwrite = overwrite))
+
+
+# --- Connection metadata (needed by dbplyr::src_dbi) ---
+
+setMethod("dbGetInfo", "sfr_connection", function(dbObj, ...) {
+  list(
+    dbname     = dbObj$database %||% "snowflake",
+    db.version = "snowflake",
+    username   = dbObj$user %||% "",
+    host       = dbObj$account %||% "",
+    port       = 443L
+  )
+})
+
+setMethod("dbIsValid", "sfr_connection", function(dbObj, ...) {
+  tryCatch({
+    !is.null(dbObj$session) &&
+      !is.null(dbObj$session$get_current_account())
+  }, error = function(e) FALSE)
+})
+
+
+# --- Identifier & string quoting (needed by dbplyr SQL generation) ---
+
+setMethod("dbQuoteIdentifier", signature("sfr_connection", "character"),
+          function(conn, x, ...) {
+            # Already quoted → pass through
+            already_quoted <- grepl("^\".*\"$", x)
+            DBI::SQL(ifelse(already_quoted, x,
+                            paste0('"', gsub('"', '""', x), '"')))
+          })
+
+setMethod("dbQuoteIdentifier", signature("sfr_connection", "SQL"),
+          function(conn, x, ...) x)
+
+setMethod("dbQuoteString", signature("sfr_connection", "character"),
+          function(conn, x, ...) {
+            DBI::SQL(ifelse(is.na(x), "NULL",
+                            paste0("'", gsub("'", "''", x), "'")))
+          })
+
+setMethod("dbQuoteString", signature("sfr_connection", "SQL"),
+          function(conn, x, ...) x)
+
+
+# --- Send query / fetch (result-set interface for dbplyr collect) ---
+
+setMethod("dbSendQuery", signature("sfr_connection", "character"),
+          function(conn, statement, ...) {
+            data <- sfr_query(conn, statement)
+            structure(
+              list(statement = statement, data = data, conn = conn),
+              class = c("sfr_result", "list")
+            )
+          })
+
+setMethod("dbFetch", "sfr_result", function(res, n = -1, ...) {
+  if (n >= 0 && n < nrow(res$data)) {
+    res$data[seq_len(n), , drop = FALSE]
+  } else {
+    res$data
+  }
+})
+
+setMethod("dbClearResult", "sfr_result", function(res, ...) {
+  invisible(TRUE)
+})
+
+setMethod("dbHasCompleted", "sfr_result", function(res, ...) {
+  TRUE
+})
+
+setMethod("dbIsValid", "sfr_result", function(dbObj, ...) {
+  TRUE
+})
+
+setMethod("dbGetInfo", "sfr_result", function(dbObj, ...) {
+  list(
+    statement     = dbObj$statement,
+    row.count     = nrow(dbObj$data),
+    has.completed = TRUE
+  )
+})
+
+
+# --- S3 method for dplyr::tbl (registered in .onLoad) ---
+
+#' @noRd
+tbl.sfr_connection <- function(src, from, ...) {
+  if (!requireNamespace("dbplyr", quietly = TRUE)) {
+    cli::cli_abort(
+      "Package {.pkg dbplyr} is required for lazy table references."
+    )
+  }
+  dplyr::tbl(dbplyr::src_dbi(src), from, ...)
+}
