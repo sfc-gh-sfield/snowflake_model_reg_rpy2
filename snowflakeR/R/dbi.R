@@ -181,9 +181,10 @@ sfr_write_table <- function(conn, table_name, value, overwrite = FALSE) {
 # enabling standard R database tooling (dbplyr, etc.).
 
 # Bridge S3 classes into S4 so DBI generics can dispatch on them.
-# Including "DBIConnection" in the chain means dbplyr's default
-# db_*.DBIConnection S3 methods are found automatically.
-setOldClass(c("sfr_connection", "DBIConnection", "list"))
+# Note: "DBIConnection" is in the S3 class vector (see connect.R) for
+# dbplyr's db_*.DBIConnection S3 methods, but cannot appear in
+# setOldClass because it's an S4 virtual class.
+setOldClass(c("sfr_connection", "list"))
 setOldClass(c("sfr_result", "list"))
 
 
