@@ -681,10 +681,14 @@ def registry_create_service(
     image_repo: str,
     ingress_enabled: bool = True,
     max_instances: int = 1,
+    force: bool = False,
     database_name: Optional[str] = None,
     schema_name: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Deploy a model version as an SPCS service."""
+    """Deploy a model version as an SPCS service.
+
+    If *force* is True and the service already exists, it is dropped first.
+    """
     from snowflake.ml.registry import Registry
 
     reg_kwargs = {"session": session}
@@ -696,6 +700,12 @@ def registry_create_service(
     reg = Registry(**reg_kwargs)
     m = reg.get_model(model_name)
     mv = m.version(version_name)
+
+    if force:
+        try:
+            mv.delete_service(service_name)
+        except Exception:
+            pass  # service may not exist -- that's fine
 
     mv.create_service(
         service_name=service_name,

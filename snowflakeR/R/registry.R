@@ -611,13 +611,15 @@ sfr_set_default_model_version <- function(reg, model_name, version_name) {
 #' @param compute_pool Character. Compute pool to use.
 #' @param image_repo Character. Image repository.
 #' @param max_instances Integer. Max service instances. Default: 1.
+#' @param force Logical. If `TRUE` and the service already exists, drop it
+#'   first and redeploy. Default: `FALSE`.
 #'
 #' @returns Invisibly returns a list with deployment info.
 #'
 #' @export
 sfr_deploy_model <- function(reg, model_name, version_name,
                              service_name, compute_pool, image_repo,
-                             max_instances = 1L) {
+                             max_instances = 1L, force = FALSE) {
   ctx <- resolve_registry_context(reg)
   bridge <- get_bridge_module("sfr_registry_bridge")
   result <- bridge$registry_create_service(
@@ -628,6 +630,7 @@ sfr_deploy_model <- function(reg, model_name, version_name,
     compute_pool = compute_pool,
     image_repo = image_repo,
     max_instances = as.integer(max_instances),
+    force = isTRUE(force),
     database_name = ctx$database_name,
     schema_name = ctx$schema_name
   )
