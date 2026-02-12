@@ -209,9 +209,7 @@ sfr_list_entities <- function(fs) {
     warehouse = args$warehouse
   )
 
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 
@@ -482,9 +480,7 @@ sfr_list_feature_views <- function(fs,
     warehouse = args$warehouse
   )
 
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 
@@ -600,9 +596,7 @@ sfr_read_feature_view <- function(fs, name, version) {
     warehouse = args$warehouse
   )
 
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 
@@ -729,9 +723,7 @@ sfr_get_refresh_history <- function(fs, name, version, verbose = FALSE) {
     verbose = verbose
   )
 
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 
@@ -845,9 +837,7 @@ sfr_generate_training_data <- function(fs,
     warehouse = args$warehouse
   )
 
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 
@@ -891,9 +881,7 @@ sfr_retrieve_features <- function(fs, spine, features) {
     warehouse = args$warehouse
   )
 
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 

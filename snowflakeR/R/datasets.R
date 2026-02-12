@@ -83,9 +83,7 @@ sfr_list_datasets <- function(conn) {
 
   bridge <- get_bridge_module("sfr_datasets_bridge")
   result <- bridge$list_datasets(session = conn$session)
-  df <- as.data.frame(result)
-  if (ncol(df) > 0) names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }
 
 
@@ -199,9 +197,7 @@ sfr_list_dataset_versions <- function(conn, name, detailed = FALSE) {
   )
 
   if (detailed) {
-    df <- as.data.frame(result)
-    if (ncol(df) > 0) names(df) <- tolower(names(df))
-    df
+    .bridge_dict_to_df(result)
   } else {
     as.character(unlist(result))
   }
@@ -258,7 +254,5 @@ sfr_read_dataset <- function(conn, name, version) {
     version = version
   )
 
-  df <- as.data.frame(result)
-  if (ncol(df) > 0) names(df) <- tolower(names(df))
-  df
+  .bridge_dict_to_df(result)
 }

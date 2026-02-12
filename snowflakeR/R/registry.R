@@ -367,7 +367,7 @@ sfr_predict <- function(reg,
     schema_name = ctx$schema_name
   )
 
-  as.data.frame(result)
+  .bridge_dict_to_df(result)
 }
 
 
@@ -390,7 +390,7 @@ sfr_show_models <- function(reg) {
     database_name = ctx$database_name,
     schema_name = ctx$schema_name
   )
-  as.data.frame(result)
+  .bridge_dict_to_df(result)
 }
 
 
@@ -458,7 +458,7 @@ sfr_show_model_versions <- function(reg, model_name) {
     database_name = ctx$database_name,
     schema_name = ctx$schema_name
   )
-  as.data.frame(result)
+  .bridge_dict_to_df(result)
 }
 
 

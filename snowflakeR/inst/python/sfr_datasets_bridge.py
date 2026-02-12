@@ -4,7 +4,29 @@ Snowflake Datasets Python Bridge
 Called from R via reticulate. Wraps snowflake.ml.dataset.Dataset.
 """
 
+import json
 from typing import Any, Dict, List, Optional
+
+
+def _pandas_to_r_dict(pdf):
+    """Convert a pandas DataFrame to a column-oriented dict with native Python
+    types via JSON round-trip.  This avoids NumPy ABI issues with reticulate."""
+    _NA = "NA_SENTINEL_"
+    clean_cols = [c.strip('"') for c in pdf.columns]
+    pdf.columns = clean_cols
+    cols = list(clean_cols)
+    nrows = len(pdf)
+
+    if nrows == 0:
+        return {"columns": cols, "data": {c: [] for c in cols}, "nrows": 0}
+
+    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
+    data = {}
+    for col in cols:
+        vals = [r.get(col) for r in records]
+        data[col] = [v if v is not None else _NA for v in vals]
+
+    return {"columns": cols, "data": data, "nrows": nrows}
 
 # ---------------------------------------------------------------------------
 # Dataset CRUD
@@ -41,8 +63,7 @@ def load_dataset(
 
 def list_datasets(session) -> Any:
     """List datasets in the current database/schema via SHOW DATASETS."""
-    result = session.sql("SHOW DATASETS").to_pandas()
-    return result
+    return _pandas_to_r_dict(session.sql("SHOW DATASETS").to_pandas())
 
 
 def delete_dataset(
@@ -108,7 +129,7 @@ def list_dataset_versions(
     if detailed:
         # Returns list of Row objects -> convert to pandas
         import pandas as pd
-        return pd.DataFrame([row.as_dict() for row in versions])
+        return _pandas_to_r_dict(pd.DataFrame([row.as_dict() for row in versions]))
     else:
         # Returns list of strings
         return versions
@@ -136,4 +157,4 @@ def read_dataset(
 
     ds = Dataset.load(session=session, name=name)
     ds = ds.select_version(version)
-    return ds.read.to_pandas()
+    return _pandas_to_r_dict(ds.read.to_pandas())

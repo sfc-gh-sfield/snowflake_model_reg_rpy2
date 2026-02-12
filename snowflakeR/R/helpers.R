@@ -3,6 +3,53 @@
 # Pure R implementations of workspace helpers. These work both in
 # Workspace Notebooks and local R environments.
 
+
+# Internal: convert the dict returned by Python _pandas_to_r_dict / query_to_dict
+# back into an R data.frame.  Handles NA sentinels and optional numeric coercion.
+#
+# @param result  A list with `$columns`, `$data`, `$nrows` (from the Python bridge).
+# @param lowercase Logical. Lowercase column names? Default TRUE.
+# @returns A data.frame.
+# @noRd
+.bridge_dict_to_df <- function(result, lowercase = TRUE) {
+  cols <- result$columns
+
+  if (result$nrows == 0L) {
+    df <- data.frame(matrix(ncol = length(cols), nrow = 0))
+    names(df) <- if (lowercase) tolower(cols) else cols
+    return(df)
+  }
+
+  df <- as.data.frame(result$data, stringsAsFactors = FALSE)
+
+  # Replace NA sentinels with proper R NA
+
+  na_sentinel <- "NA_SENTINEL_"
+  for (col in names(df)) {
+    if (is.character(df[[col]])) {
+      df[[col]][df[[col]] == na_sentinel] <- NA_character_
+    }
+  }
+
+  # Try to coerce character columns to numeric where appropriate
+  for (col in names(df)) {
+    if (is.character(df[[col]])) {
+      non_na <- df[[col]][!is.na(df[[col]])]
+      if (length(non_na) > 0) {
+        num_vals <- suppressWarnings(as.numeric(non_na))
+        if (!any(is.na(num_vals))) {
+          df[[col]] <- as.numeric(df[[col]])
+        }
+      }
+    }
+  }
+
+  if (lowercase) {
+    names(df) <- tolower(names(df))
+  }
+  df
+}
+
 #' Print a data.frame cleanly
 #'
 #' Bypasses extra formatting that can cause issues in Workspace Notebooks.

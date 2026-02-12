@@ -15,11 +15,33 @@ R users never import this directly - they use the sfr_* R functions which
 call this module via reticulate.
 """
 
+import json
 import uuid
 import textwrap
 from typing import Dict, List, Optional, Any
 
 import pandas as pd
+
+
+def _pandas_to_r_dict(pdf):
+    """Convert a pandas DataFrame to a column-oriented dict with native Python
+    types via JSON round-trip.  This avoids NumPy ABI issues with reticulate."""
+    _NA = "NA_SENTINEL_"
+    clean_cols = [c.strip('"') for c in pdf.columns]
+    pdf.columns = clean_cols
+    cols = list(clean_cols)
+    nrows = len(pdf)
+
+    if nrows == 0:
+        return {"columns": cols, "data": {c: [] for c in cols}, "nrows": 0}
+
+    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
+    data = {}
+    for col in cols:
+        vals = [r.get(col) for r in records]
+        data[col] = [v if v is not None else _NA for v in vals]
+
+    return {"columns": cols, "data": data, "nrows": nrows}
 
 
 # =============================================================================
@@ -417,7 +439,7 @@ def registry_show_models(
         reg_kwargs["schema_name"] = schema_name
 
     reg = Registry(**reg_kwargs)
-    return reg.show_models()
+    return _pandas_to_r_dict(reg.show_models())
 
 
 def registry_get_model(
@@ -460,7 +482,7 @@ def registry_show_versions(
     info = registry_get_model(
         session, model_name, database_name, schema_name
     )
-    return info["model"].show_versions()
+    return _pandas_to_r_dict(info["model"].show_versions())
 
 
 def registry_predict(
@@ -500,7 +522,7 @@ def registry_predict(
     result_df = result.to_pandas()
     result_df.columns = [c.lower() for c in result_df.columns]
 
-    return result_df
+    return _pandas_to_r_dict(result_df)
 
 
 def registry_predict_local(
@@ -529,7 +551,7 @@ def registry_predict_local(
     ctx = custom_model.ModelContext(model_rds=model_rds_path)
     wrapper = WrapperClass(ctx)
 
-    return wrapper.predict(input_data)
+    return _pandas_to_r_dict(wrapper.predict(input_data))
 
 
 def registry_delete_model(

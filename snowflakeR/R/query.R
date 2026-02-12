@@ -34,42 +34,7 @@ sfr_query <- function(conn, sql, .keep_case = FALSE) {
   bridge <- get_bridge_module("sfr_connect_bridge")
   result <- bridge$query_to_dict(conn$session, sql)
 
-  cols <- result$columns
-
-  if (result$nrows == 0L) {
-    df <- data.frame(matrix(ncol = length(cols), nrow = 0))
-    names(df) <- if (.keep_case) cols else tolower(cols)
-    return(df)
-  }
-
-  df <- as.data.frame(result$data, stringsAsFactors = FALSE)
-
-  # Replace NA sentinel strings with proper R NA values
-  na_sentinel <- "NA_SENTINEL_"
-  for (col in names(df)) {
-    if (is.character(df[[col]])) {
-      df[[col]][df[[col]] == na_sentinel] <- NA_character_
-    }
-  }
-
-  # Try to convert character columns to numeric where appropriate
-  for (col in names(df)) {
-    if (is.character(df[[col]])) {
-      non_na <- df[[col]][!is.na(df[[col]])]
-      if (length(non_na) > 0) {
-        num_vals <- suppressWarnings(as.numeric(non_na))
-        if (!any(is.na(num_vals))) {
-          df[[col]] <- as.numeric(df[[col]])
-        }
-      }
-    }
-  }
-
-  # Lowercase column names for R friendliness (unless DBI/dbplyr needs original casing)
-  if (!.keep_case) {
-    names(df) <- tolower(names(df))
-  }
-  df
+  .bridge_dict_to_df(result, lowercase = !.keep_case)
 }
 
 
