@@ -670,7 +670,8 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
 #' Useful after [sfr_deploy_model()] since SPCS services take several minutes
 #' to provision.
 #'
-#' @param conn An `sfr_connection` object.
+#' @param reg An `sfr_model_registry` or `sfr_connection` object. Used to
+#'   resolve the database and schema where the service lives.
 #' @param service_name Character. Name of the SPCS service.
 #' @param timeout_min Numeric. Maximum minutes to wait. Default: 10.
 #' @param poll_sec Numeric. Seconds between status checks. Default: 15.
@@ -682,17 +683,29 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
 #' @examples
 #' \dontrun{
 #' sfr_deploy_model(reg, "MY_MODEL", "V1", "my_svc", "ML_POOL", "my_repo")
-#' sfr_wait_for_service(conn, "my_svc", timeout_min = 15)
+#' sfr_wait_for_service(reg, "my_svc", timeout_min = 15)
 #' }
 #'
 #' @export
-sfr_wait_for_service <- function(conn,
+sfr_wait_for_service <- function(reg,
                                  service_name,
                                  timeout_min = 10,
                                  poll_sec = 15,
                                  verbose = TRUE) {
-  validate_connection(conn)
+  ctx <- resolve_registry_context(reg)
+  # Extract conn for sfr_query -- reg may be sfr_model_registry or sfr_connection
+
+  conn <- if (inherits(reg, "sfr_model_registry")) reg$conn else reg
   stopifnot(is.character(service_name), length(service_name) == 1)
+
+  # Build the SHOW SERVICES query scoped to the correct schema
+  show_sql <- paste0("SHOW SERVICES LIKE '", service_name, "'")
+  if (!is.null(ctx$database_name) && !is.null(ctx$schema_name)) {
+    show_sql <- paste0(
+      show_sql, " IN SCHEMA ",
+      ctx$database_name, ".", ctx$schema_name
+    )
+  }
 
   deadline <- Sys.time() + timeout_min * 60
   attempt <- 0L
@@ -707,9 +720,9 @@ sfr_wait_for_service <- function(conn,
 
   repeat {
     attempt <- attempt + 1L
-    # Query service status
+    # Query service status (scoped to registry schema)
     status_df <- tryCatch(
-      sfr_query(conn, paste0("SHOW SERVICES LIKE '", service_name, "'")),
+      sfr_query(conn, show_sql),
       error = function(e) NULL
     )
 
