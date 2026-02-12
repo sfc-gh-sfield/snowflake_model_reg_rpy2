@@ -273,7 +273,7 @@ setMethod("dbSendQuery", signature("sfr_connection", "character"),
             data <- sfr_query(conn, statement)
             structure(
               list(statement = statement, data = data, conn = conn),
-              class = c("sfr_result", "list")
+              class = c("sfr_result", "DBIResult", "list")
             )
           })
 
