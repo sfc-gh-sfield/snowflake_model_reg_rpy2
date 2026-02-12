@@ -97,7 +97,9 @@ and export it as an environment variable so R can access it:
 
 ```python
 import os
-snowflaker_path = os.path.join(os.getcwd(), "snowflakeR")
+# This notebook lives at snowflakeR/inst/notebooks/, so the package root
+# (the directory containing DESCRIPTION) is two levels up.
+snowflaker_path = os.path.normpath(os.path.join(os.getcwd(), "..", ".."))
 print(f"snowflakeR path: {snowflaker_path}")
 assert os.path.isfile(os.path.join(snowflaker_path, "DESCRIPTION")), \
     f"DESCRIPTION not found in {snowflaker_path}"
