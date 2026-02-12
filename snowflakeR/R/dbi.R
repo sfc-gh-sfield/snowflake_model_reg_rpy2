@@ -181,11 +181,19 @@ sfr_write_table <- function(conn, table_name, value, overwrite = FALSE) {
 # enabling standard R database tooling (dbplyr, etc.).
 
 # Bridge S3 classes into S4 so DBI generics can dispatch on them.
-# Note: "DBIConnection" is in the S3 class vector (see connect.R) for
-# dbplyr's db_*.DBIConnection S3 methods, but cannot appear in
-# setOldClass because it's an S4 virtual class.
+#
+# Two layers:
+#   - S3 class vectors include "DBIConnection"/"DBIResult" (see connect.R
+#     and dbSendQuery below) for dbplyr's S3 dispatch.
+#   - setOldClass + setIs tell S4 about the inheritance so that S4 value
+#     class checks (e.g. dbSendQuery must return DBIResult) pass via is().
+#   - DBIConnection/DBIResult are S4 virtual classes and CANNOT appear in
+#     setOldClass, so we use setIs() separately.
 setOldClass(c("sfr_connection", "list"))
+setIs("sfr_connection", "DBIConnection")
+
 setOldClass(c("sfr_result", "list"))
+setIs("sfr_result", "DBIResult")
 
 
 # =============================================================================
