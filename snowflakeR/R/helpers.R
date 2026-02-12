@@ -94,6 +94,136 @@ rcat <- function(...) {
 }
 
 
+#' Load notebook configuration and set execution context
+#'
+#' Reads a `notebook_config.yaml` file and applies the execution context
+#' (warehouse, database, schema) to the connection. This ensures consistent
+#' context across all notebook cells.
+#'
+#' Copy `notebook_config.yaml.template` to `notebook_config.yaml` and edit
+#' with your values before running.
+#'
+#' @param conn An `sfr_connection` object.
+#' @param config_path Character. Path to the YAML config file. Default:
+#'   `"notebook_config.yaml"` in the current directory.
+#'
+#' @returns The updated `sfr_connection` object (invisibly). You **must**
+#'   reassign: `conn <- sfr_load_notebook_config(conn)`.
+#'
+#' @export
+sfr_load_notebook_config <- function(conn, config_path = "notebook_config.yaml") {
+  validate_connection(conn)
+
+  if (!file.exists(config_path)) {
+    # Check for template
+    template <- paste0(config_path, ".template")
+    if (file.exists(template)) {
+      cli::cli_abort(c(
+        "Config file {.file {config_path}} not found.",
+        "i" = "Copy the template: {.code file.copy(\"{template}\", \"{config_path}\")}",
+        "i" = "Then edit {.file {config_path}} with your values."
+      ))
+    }
+    cli::cli_abort("Config file {.file {config_path}} not found.")
+  }
+
+  # Read YAML (use a simple parser to avoid hard dependency on yaml package)
+  config <- tryCatch(
+    {
+      if (requireNamespace("yaml", quietly = TRUE)) {
+        yaml::read_yaml(config_path)
+      } else {
+        # Fallback: read via reticulate/Python yaml
+        py_yaml <- reticulate::import("yaml", convert = TRUE)
+        py_builtins <- reticulate::import_builtins()
+        fh <- py_builtins$open(config_path, "r")
+        on.exit(fh$close(), add = TRUE)
+        py_yaml$safe_load(fh)
+      }
+    },
+    error = function(e) {
+      cli::cli_abort(c(
+        "Failed to parse {.file {config_path}}.",
+        "x" = conditionMessage(e)
+      ))
+    }
+  )
+
+  # Apply execution context
+  ctx <- config$context
+  if (is.null(ctx)) {
+    cli::cli_warn("No {.field context} section found in {.file {config_path}}.")
+    return(invisible(conn))
+  }
+
+  wh <- ctx$warehouse
+  db <- ctx$database
+  sc <- ctx$schema
+  rl <- ctx$role
+
+  # Set context on the session
+  session <- conn$session
+  if (!is.null(wh) && nchar(wh) > 0 && wh != "<YOUR_WAREHOUSE>") {
+    session$sql(paste0("USE WAREHOUSE ", wh))$collect()
+  }
+  if (!is.null(db) && nchar(db) > 0 && db != "<YOUR_DATABASE>") {
+    session$sql(paste0("USE DATABASE ", db))$collect()
+  }
+  if (!is.null(sc) && nchar(sc) > 0 && sc != "<YOUR_SCHEMA>") {
+    session$sql(paste0("USE SCHEMA ", sc))$collect()
+  }
+  if (!is.null(rl) && nchar(rl) > 0 && rl != "<YOUR_ROLE>") {
+    session$sql(paste0("USE ROLE ", rl))$collect()
+  }
+
+  # Refresh R-side fields
+  conn <- refresh_conn_from_session(conn)
+
+  # Store config on conn for use in notebooks (e.g., table prefix)
+  conn$notebook_config <- config
+
+  cli::cli_inform(c(
+    "v" = "Notebook config loaded from {.file {config_path}}.",
+    "i" = "Warehouse: {.val {conn$warehouse %||% '<not set>'}}",
+    "i" = "Database:  {.val {conn$database %||% '<not set>'}}",
+    "i" = "Schema:    {.val {conn$schema %||% '<not set>'}}"
+  ))
+
+  invisible(conn)
+}
+
+
+#' Build a fully qualified table name
+#'
+#' Constructs `DATABASE.SCHEMA.TABLE_NAME` from the connection context.
+#' Ensures all notebook table references are fully qualified as recommended
+#' by Snowflake for Workspace Notebooks.
+#'
+#' @param conn An `sfr_connection` object.
+#' @param table_name Character. Unqualified table name.
+#'
+#' @returns Character. Fully qualified table name.
+#'
+#' @export
+sfr_fqn <- function(conn, table_name) {
+  validate_connection(conn)
+  stopifnot(is.character(table_name), length(table_name) == 1)
+
+  db <- conn$database
+  sc <- conn$schema
+
+  if (is.null(db) || is.null(sc)) {
+    cli::cli_warn(c(
+      "Database or schema not set -- returning unqualified name.",
+      "i" = "Set context with: {.code conn <- sfr_use(conn, database = \"...\", schema = \"...\")}"
+    ))
+    return(table_name)
+  }
+
+  paste(db, sc, table_name, sep = ".")
+}
+
+
 #' Check the snowflakeR environment
 #'
 #' Runs diagnostics on R, Python, and Snowflake ML dependencies.
