@@ -174,51 +174,42 @@ sfr_write_table <- function(conn, table_name, value, overwrite = FALSE) {
 # -----------------------------------------------------------------------------
 # DBI generics registration (only when DBI is loaded)
 # -----------------------------------------------------------------------------
-# S3 methods for DBI generics are registered in .onLoad() in zzz.R
-# when the DBI package is available. This avoids a hard dependency on DBI
-# while still enabling standard R database tooling.
+# DBI uses S4 generics, so we must:
+#   1. Register the S3 class with the S4 system via setOldClass()
+#   2. Register S4 methods via setMethod() in .onLoad()
+# This avoids a hard dependency on DBI (which is in Suggests) while still
+# enabling standard R database tooling (dbplyr, etc.).
 
-# Internal DBI method implementations (not exported directly)
-# These are registered as S3 methods for DBI generics in .onLoad()
+# Bridge the S3 class into S4 so DBI generics can dispatch on it
+setOldClass(c("sfr_connection", "list"))
 
-#' @noRd
-dbGetQuery.sfr_connection <- function(conn, statement, ...) {
-  sfr_query(conn, statement)
-}
+# Internal: called from .onLoad() in zzz.R when DBI is available
+register_dbi_methods <- function() {
+  setMethod("dbGetQuery", signature(conn = "sfr_connection"),
+            function(conn, statement, ...) sfr_query(conn, statement))
 
-#' @noRd
-dbExecute.sfr_connection <- function(conn, statement, ...) {
-  sfr_execute(conn, statement)
-}
+  setMethod("dbExecute", signature(conn = "sfr_connection"),
+            function(conn, statement, ...) sfr_execute(conn, statement))
 
-#' @noRd
-dbListTables.sfr_connection <- function(conn, ...) {
-  sfr_list_tables(conn, ...)
-}
+  setMethod("dbListTables", signature(conn = "sfr_connection"),
+            function(conn, ...) sfr_list_tables(conn, ...))
 
-#' @noRd
-dbListFields.sfr_connection <- function(conn, name, ...) {
-  fields <- sfr_list_fields(conn, name)
-  as.character(fields$name)
-}
+  setMethod("dbListFields", signature(conn = "sfr_connection"),
+            function(conn, name, ...) {
+              fields <- sfr_list_fields(conn, name)
+              as.character(fields$name)
+            })
 
-#' @noRd
-dbExistsTable.sfr_connection <- function(conn, name, ...) {
-  sfr_table_exists(conn, name)
-}
+  setMethod("dbExistsTable", signature(conn = "sfr_connection"),
+            function(conn, name, ...) sfr_table_exists(conn, name))
 
-#' @noRd
-dbDisconnect.sfr_connection <- function(conn, ...) {
-  sfr_disconnect(conn)
-}
+  setMethod("dbDisconnect", signature(conn = "sfr_connection"),
+            function(conn, ...) sfr_disconnect(conn))
 
-#' @noRd
-dbReadTable.sfr_connection <- function(conn, name, ...) {
-  sfr_read_table(conn, name)
-}
+  setMethod("dbReadTable", signature(conn = "sfr_connection"),
+            function(conn, name, ...) sfr_read_table(conn, name))
 
-#' @noRd
-dbWriteTable.sfr_connection <- function(conn, name, value, ...,
-                                        overwrite = FALSE) {
-  sfr_write_table(conn, name, value, overwrite = overwrite)
+  setMethod("dbWriteTable", signature(conn = "sfr_connection"),
+            function(conn, name, value, ..., overwrite = FALSE)
+              sfr_write_table(conn, name, value, overwrite = overwrite))
 }

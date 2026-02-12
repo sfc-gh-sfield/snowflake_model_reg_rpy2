@@ -15,21 +15,10 @@
   toset <- !(names(op_sfr) %in% names(op))
   if (any(toset)) options(op_sfr[toset])
 
-  # Register DBI S3 methods when DBI is available
-  # This allows sfr_connection to work with dbGetQuery(), dbplyr, etc.
+  # Register DBI S4 methods when DBI is available
+  # DBI uses S4 generics, so we need setMethod() -- not registerS3method()
   if (requireNamespace("DBI", quietly = TRUE)) {
-    register_dbi_method <- function(generic, method) {
-      registerS3method(generic, "sfr_connection", method,
-                       envir = asNamespace("DBI"))
-    }
-    register_dbi_method("dbGetQuery", dbGetQuery.sfr_connection)
-    register_dbi_method("dbExecute", dbExecute.sfr_connection)
-    register_dbi_method("dbListTables", dbListTables.sfr_connection)
-    register_dbi_method("dbListFields", dbListFields.sfr_connection)
-    register_dbi_method("dbExistsTable", dbExistsTable.sfr_connection)
-    register_dbi_method("dbDisconnect", dbDisconnect.sfr_connection)
-    register_dbi_method("dbReadTable", dbReadTable.sfr_connection)
-    register_dbi_method("dbWriteTable", dbWriteTable.sfr_connection)
+    register_dbi_methods()
   }
 
   invisible()
