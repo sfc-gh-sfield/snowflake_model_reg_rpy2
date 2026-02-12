@@ -28,6 +28,7 @@ Imports:
     rlang
 Suggests:
     snowflakeauth,
+    RcppTOML,
     testthat (>= 3.0.0),
     dplyr,
     dbplyr,

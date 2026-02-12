@@ -2,6 +2,7 @@
 # =============================================================================
 # Foundation module: all other modules depend on a connection object.
 # Integrates with snowflakeauth (optional) for connections.toml support.
+# Falls back to reading connections.toml directly via RcppTOML or Python toml.
 
 # -----------------------------------------------------------------------------
 # Internal: Python bridge lazy loader
@@ -35,6 +36,68 @@ get_bridge_module <- function(module_name) {
 
 
 # -----------------------------------------------------------------------------
+# Internal: Read connections.toml directly (fallback when snowflakeauth absent)
+# -----------------------------------------------------------------------------
+
+#' Read a connection profile from connections.toml
+#'
+#' Searches standard locations for Snowflake's `connections.toml` and returns
+#' the named profile (or the default / only profile).
+#'
+#' @param name Character or NULL. Profile name. When `NULL`, looks for
+#'   `[default]`, then falls back to the first profile.
+#' @returns A named list of connection parameters, or `NULL` if not found.
+#' @noRd
+.read_connections_toml <- function(name = NULL) {
+  # Standard search paths
+  toml_path <- Sys.getenv("SNOWFLAKE_HOME", file.path(Sys.getenv("HOME"), ".snowflake"))
+  toml_file <- file.path(toml_path, "connections.toml")
+  if (!file.exists(toml_file)) return(NULL)
+
+  toml <- tryCatch(
+    {
+      if (requireNamespace("RcppTOML", quietly = TRUE)) {
+        RcppTOML::parseTOML(toml_file)
+      } else {
+        # Fallback: Python toml / tomllib
+        py_toml <- tryCatch(
+          reticulate::import("tomllib", convert = TRUE),
+          error = function(e) reticulate::import("toml", convert = TRUE)
+        )
+        py_builtins <- reticulate::import_builtins()
+        fh <- py_builtins$open(toml_file, "rb")
+        on.exit(fh$close(), add = TRUE)
+        py_toml$load(fh)
+      }
+    },
+    error = function(e) NULL
+  )
+
+  if (is.null(toml) || length(toml) == 0) return(NULL)
+
+  # Select the right profile
+  if (!is.null(name) && name %in% names(toml)) {
+    conn <- toml[[name]]
+  } else if ("default" %in% names(toml)) {
+    conn <- toml[["default"]]
+  } else if (length(toml) == 1) {
+    # Single profile -- use it
+    conn <- toml[[1]]
+  } else {
+    # Multiple profiles, none selected -- use first and warn
+    first_name <- names(toml)[1]
+    cli::cli_inform(c(
+      "i" = "No connection name specified; using profile {.val {first_name}} from {.file connections.toml}.",
+      "i" = "Pass {.arg name} to {.fn sfr_connect} to choose a specific profile."
+    ))
+    conn <- toml[[1]]
+  }
+
+  conn
+}
+
+
+# -----------------------------------------------------------------------------
 # Exported: Connection
 # -----------------------------------------------------------------------------
 
@@ -45,13 +108,13 @@ get_bridge_module <- function(module_name) {
 #'
 #' - **Auto-detect:** In Workspace Notebooks, wraps the active Snowpark session.
 #'   Locally, reads `connections.toml` / `config.toml` (via `snowflakeauth` if
-#'   installed) or uses explicit parameters.
+#'   installed, or directly via RcppTOML / Python toml as fallback).
 #' - **Named connection:** Pass `name` to select a connection from
 #'   `connections.toml`.
 #' - **Explicit parameters:** Pass `account`, `user`, `authenticator`, etc.
 #'
 #' @param name Character. Named connection from `connections.toml`. If `NULL`,
-#'   uses the default connection.
+#'   uses the `[default]` profile, or the only profile if there is exactly one.
 #' @param account Character. Snowflake account identifier.
 #' @param user Character. Snowflake username.
 #' @param warehouse Character. Default warehouse.
@@ -59,9 +122,10 @@ get_bridge_module <- function(module_name) {
 #' @param schema Character. Default schema.
 #' @param role Character. Role to use.
 #' @param authenticator Character. Authentication method (e.g.,
-#'   `"externalbrowser"`, `"snowflake"`, `"oauth"`).
+#'   `"externalbrowser"`, `"snowflake"`, `"SNOWFLAKE_JWT"`, `"oauth"`).
 #' @param private_key_file Character. Path to PEM-encoded private key for
-#'   key-pair authentication.
+#'   key-pair authentication. Also read from `connections.toml` field
+#'   `private_key_path`.
 #' @param ... Additional connection parameters passed to Snowpark session
 #'   builder or `snowflakeauth::snowflake_connection()`.
 #' @param .use_snowflakeauth Logical. Whether to use `snowflakeauth` for
@@ -75,9 +139,16 @@ get_bridge_module <- function(module_name) {
 #' conn <- sfr_connect()
 #'
 #' # Named connection
-#' conn <- sfr_connect(name = "production")
+#' conn <- sfr_connect(name = "my_profile")
 #'
-#' # Explicit parameters
+#' # Explicit parameters with key-pair auth
+#' conn <- sfr_connect(
+#'   account = "xy12345.us-east-1",
+#'   user = "MYUSER",
+#'   private_key_file = "~/.snowflake/keys/rsa_key.p8"
+#' )
+#'
+#' # Explicit parameters with browser SSO
 #' conn <- sfr_connect(
 #'   account = "xy12345.us-east-1",
 #'   user = "MYUSER",
@@ -115,7 +186,7 @@ sfr_connect <- function(name = NULL,
     # Local environment - build session from parameters
     env_type <- "local"
 
-    # Try snowflakeauth first
+    # Strategy 1: snowflakeauth (if installed)
     sf_conn <- NULL
     if (.use_snowflakeauth &&
         requireNamespace("snowflakeauth", quietly = TRUE)) {
@@ -138,13 +209,30 @@ sfr_connect <- function(name = NULL,
 
     if (!is.null(sf_conn)) {
       # Extract params from snowflakeauth connection
-      account <- account %||% sf_conn$account
-      user <- user %||% sf_conn$user
-      warehouse <- warehouse %||% sf_conn$warehouse
-      database <- database %||% sf_conn$database
-      schema <- schema %||% sf_conn$schema
-      role <- role %||% sf_conn$role
-      auth_method <- sf_conn$authenticator %||% "snowflake"
+      account         <- account %||% sf_conn$account
+      user            <- user %||% sf_conn$user
+      warehouse       <- warehouse %||% sf_conn$warehouse
+      database        <- database %||% sf_conn$database
+      schema          <- schema %||% sf_conn$schema
+      role            <- role %||% sf_conn$role
+      private_key_file <- private_key_file %||%
+        sf_conn$private_key_path %||%
+        sf_conn$private_key_file
+      auth_method     <- sf_conn$authenticator %||% "snowflake"
+    } else if (is.null(account)) {
+      # Strategy 2: read connections.toml directly
+      toml_conn <- .read_connections_toml(name)
+      if (!is.null(toml_conn)) {
+        account         <- account %||% toml_conn$account
+        user            <- user %||% toml_conn$user
+        warehouse       <- warehouse %||% toml_conn$warehouse
+        database        <- database %||% toml_conn$database
+        schema          <- schema %||% toml_conn$schema
+        role            <- role %||% toml_conn$role
+        private_key_file <- private_key_file %||% toml_conn$private_key_path
+        authenticator    <- authenticator %||% toml_conn$authenticator
+      }
+      auth_method <- authenticator %||% "snowflake"
     } else {
       auth_method <- authenticator %||% "snowflake"
     }

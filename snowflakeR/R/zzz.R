@@ -15,12 +15,14 @@
   toset <- !(names(op_sfr) %in% names(op))
   if (any(toset)) options(op_sfr[toset])
 
-  # Register S3 methods for generics in Suggests packages
-  if (requireNamespace("dplyr", quietly = TRUE)) {
-    registerS3method("tbl", "sfr_connection", tbl.sfr_connection,
-                     envir = asNamespace("dplyr"))
-  }
+  # Register S3 methods for generics in Suggests packages.
+  # Note: tbl.sfr_connection is NOT registered -- since sfr_connection
+  # includes "DBIConnection" in its class vector, dbplyr's own
+  # tbl.DBIConnection dispatches correctly.
   if (requireNamespace("dbplyr", quietly = TRUE)) {
+    registerS3method("dbplyr_edition", "sfr_connection",
+                     dbplyr_edition.sfr_connection,
+                     envir = asNamespace("dbplyr"))
     registerS3method("db_query_fields", "sfr_connection",
                      db_query_fields.sfr_connection,
                      envir = asNamespace("dbplyr"))

@@ -68,16 +68,12 @@ sfr_list_tables <- function(conn, database = NULL, schema = NULL) {
     ))
   }
 
-  sql <- sprintf(
-    "SHOW TABLES IN %s.%s",
-    db, sc
-  )
-  result <- conn$session$sql(sql)$to_pandas()
-  df <- as.data.frame(result)
+  sql <- sprintf("SHOW TABLES IN %s.%s", db, sc)
+  df <- sfr_query(conn, sql)
 
   if (nrow(df) == 0) return(character(0))
 
-  # SHOW TABLES returns a 'name' column
+  # SHOW TABLES returns a 'name' column (lowercased by sfr_query)
   name_col <- if ("name" %in% names(df)) "name" else names(df)[2]
   as.character(df[[name_col]])
 }
@@ -96,9 +92,7 @@ sfr_list_fields <- function(conn, table_name) {
   stopifnot(is.character(table_name), length(table_name) == 1L)
 
   sql <- sprintf("DESCRIBE TABLE %s", table_name)
-  result <- conn$session$sql(sql)$to_pandas()
-  df <- as.data.frame(result)
-  names(df) <- tolower(names(df))
+  df <- sfr_query(conn, sql)
   df
 }
 
@@ -106,21 +100,39 @@ sfr_list_fields <- function(conn, table_name) {
 #' Check if a table exists
 #'
 #' @param conn An `sfr_connection` object.
-#' @param table_name Character. Name of the table.
+#' @param table_name Character. Name of the table (may be fully qualified
+#'   as `DB.SCHEMA.TABLE`).
 #'
 #' @returns Logical.
 #'
 #' @export
 sfr_table_exists <- function(conn, table_name) {
+
   validate_connection(conn)
   stopifnot(is.character(table_name), length(table_name) == 1L)
 
+  # Parse FQN: extract database, schema, and bare table name
+  parts <- strsplit(table_name, "\\.")[[1]]
+  if (length(parts) == 3L) {
+    db <- parts[1]
+    sc <- parts[2]
+    bare <- parts[3]
+  } else if (length(parts) == 2L) {
+    db <- NULL
+    sc <- parts[1]
+    bare <- parts[2]
+  } else {
+    db <- NULL
+    sc <- NULL
+    bare <- parts[1]
+  }
+
   tables <- tryCatch(
-    sfr_list_tables(conn),
+    sfr_list_tables(conn, database = db, schema = sc),
     error = function(e) character(0)
   )
 
-  toupper(table_name) %in% toupper(tables)
+  toupper(bare) %in% toupper(tables)
 }
 
 
@@ -159,6 +171,14 @@ sfr_read_table <- function(conn, table_name, limit = NULL) {
 sfr_write_table <- function(conn, table_name, value, overwrite = FALSE) {
   validate_connection(conn)
   stopifnot(is.data.frame(value))
+
+  # Uppercase column names to follow Snowflake convention.
+  # Snowflake stores unquoted identifiers in uppercase; pandas DataFrames
+  # often have lowercase names which would be stored case-sensitively.
+  names(value) <- toupper(names(value))
+
+  # Reset row names to avoid Snowpark warning about non-standard index
+  rownames(value) <- NULL
 
   py_df <- reticulate::r_to_py(value)
   sp_df <- conn$session$create_dataframe(py_df)
@@ -203,7 +223,7 @@ setIs("sfr_result", "DBIResult")
 # --- Core query / table methods ---
 
 setMethod("dbGetQuery", signature(conn = "sfr_connection"),
-          function(conn, statement, ...) sfr_query(conn, statement))
+          function(conn, statement, ...) sfr_query(conn, statement, .keep_case = TRUE))
 
 setMethod("dbExecute", signature(conn = "sfr_connection"),
           function(conn, statement, ...) sfr_execute(conn, statement))
@@ -278,7 +298,7 @@ setMethod("dbQuoteString", signature("sfr_connection", "SQL"),
 
 setMethod("dbSendQuery", signature("sfr_connection", "character"),
           function(conn, statement, ...) {
-            data <- sfr_query(conn, statement)
+            data <- sfr_query(conn, statement, .keep_case = TRUE)
             structure(
               list(statement = statement, data = data, conn = conn),
               class = c("sfr_result", "DBIResult", "list")
@@ -317,18 +337,28 @@ setMethod("dbGetInfo", "sfr_result", function(dbObj, ...) {
 # --- S3 methods for dplyr / dbplyr (registered in .onLoad) ---
 
 #' @noRd
-tbl.sfr_connection <- function(src, from, ...) {
-  if (!requireNamespace("dbplyr", quietly = TRUE)) {
-    cli::cli_abort(
-      "Package {.pkg dbplyr} is required for lazy table references."
-    )
-  }
-  dplyr::tbl(dbplyr::src_dbi(src), from, ...)
-}
+dbplyr_edition.sfr_connection <- function(con) 2L
 
 #' @noRd
 db_query_fields.sfr_connection <- function(con, sql, ...) {
-  # Run a LIMIT 0 query to discover column names without fetching data
-  df <- sfr_query(con, paste("SELECT * FROM", sql, "LIMIT 0"))
-  names(df)
+  # Convert dbplyr table identifiers to SQL strings.
+  # in_catalog/in_schema produce dbplyr_catalog/dbplyr_schema objects;
+  # format() renders them with backtick-quoting, which we convert to
+  # Snowflake's double-quote convention.
+  sql_str <- if (inherits(sql, "dbplyr_catalog") ||
+                 inherits(sql, "dbplyr_schema") ||
+                 inherits(sql, "dbplyr_table_ident") ||
+                 inherits(sql, "ident")) {
+    gsub("`", "\"", format(sql))
+  } else if (inherits(sql, "SQL") || inherits(sql, "sql")) {
+    as.character(sql)
+  } else {
+    as.character(sql)
+  }
+  # Run a LIMIT 0 query to discover column names.
+  # Return names as-is from Snowflake (typically uppercase) so that
+  # dbplyr generates SQL with matching case for quoted identifiers.
+  bridge <- get_bridge_module("sfr_connect_bridge")
+  result <- bridge$query_to_dict(con$session, paste("SELECT * FROM", sql_str, "LIMIT 0"))
+  result$columns
 }

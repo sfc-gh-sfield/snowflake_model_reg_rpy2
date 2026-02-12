@@ -4,10 +4,11 @@ Snowflake Connection Bridge
 
 Python backend for snowflakeR::R/connect.R.
 
-Handles Snowpark session creation and active session detection
-for Workspace Notebooks.
+Handles Snowpark session creation, active session detection
+for Workspace Notebooks, and robust pandas → R data conversion.
 """
 
+import json
 import os
 from typing import Optional
 
@@ -118,3 +119,71 @@ def create_session(
 
     session = Session.builder.configs(conn_params).create()
     return session
+
+
+def pandas_to_r_dict(pdf):
+    """
+    Convert a pandas DataFrame to a column-oriented Python dict
+    with native Python types (no numpy arrays).
+
+    The NumPy 1.x / 2.x ABI break can cause reticulate to leave
+    numpy.ndarray objects unconverted when going pandas → R.
+    This function round-trips through JSON to guarantee native
+    Python floats/ints/strings that reticulate always handles.
+
+    Args:
+        pdf: A pandas DataFrame.
+
+    Returns:
+        dict[str, list]: Column name → list of native Python values.
+    """
+    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
+    cols = list(pdf.columns)
+    return {col: [r.get(col) for r in records] for col in cols}
+
+
+def query_to_dict(session, sql):
+    """
+    Execute a SQL query and return the result as a column-oriented dict
+    with native Python types only (safe for reticulate conversion to R).
+
+    This keeps the entire pandas/numpy interaction on the Python side,
+    avoiding reticulate's NumPy version checks which can fail with
+    NumPy 1.x/2.x ABI mismatches.
+
+    None values are converted to the string "NA_SENTINEL_" so that
+    R's as.data.frame() sees consistent column lengths.  The R side
+    replaces these sentinels with proper NA values.
+
+    Args:
+        session: Snowpark Session object.
+        sql: SQL query string.
+
+    Returns:
+        dict with keys:
+            - "columns": list of column names
+            - "data": dict[str, list] of column name → values
+            - "nrows": int
+    """
+    _NA = "NA_SENTINEL_"
+
+    pdf = session.sql(sql).to_pandas()
+    # Strip surrounding quotes from column names (SHOW/DESCRIBE commands
+    # return quoted identifiers like '"name"' which R's make.names mangles)
+    clean_cols = [c.strip('"') for c in pdf.columns]
+    pdf.columns = clean_cols
+    cols = list(clean_cols)
+    nrows = len(pdf)
+
+    if nrows == 0:
+        return {"columns": cols, "data": {c: [] for c in cols}, "nrows": 0}
+
+    records = json.loads(pdf.to_json(orient="records", date_format="iso"))
+    data = {}
+    for col in cols:
+        vals = [r.get(col) for r in records]
+        # Replace None with sentinel so R sees a uniform-length character
+        # vector rather than a list of NULLs (which collapses to length 0).
+        data[col] = [v if v is not None else _NA for v in vals]
+
+    return {"columns": cols, "data": data, "nrows": nrows}

@@ -33,17 +33,23 @@ context:
 # Local environments:  Used for sfr_connect() if not using connections.toml
 
 connection:
+  # Profile name in ~/.snowflake/connections.toml (recommended)
+  # If set, sfr_connect() reads all params from that profile automatically.
+  # name: "my_profile"
+
+  # Fallback explicit params (used when connections.toml is not available,
+  # e.g. in Workspace Notebooks, or when name is not set)
   # Snowflake account identifier (e.g., "xy12345" or "xy12345.us-east-1")
   account: "<YOUR_ACCOUNT>"
 
   # Snowflake username
   user: "<YOUR_USER>"
 
-  # Authentication method: "externalbrowser", "snowflake", or "keypair"
+  # Authentication method: "externalbrowser", "snowflake", "SNOWFLAKE_JWT"
   auth_method: "externalbrowser"
 
-  # Path to RSA private key (only needed if auth_method is "keypair")
-  # private_key_path: "~/.snowflake/rsa_key.p8"
+  # Path to RSA private key (only needed for key-pair / SNOWFLAKE_JWT auth)
+  # private_key_path: "~/.snowflake/keys/rsa_key.p8"
 
 # =============================================================================
 # Demo Settings

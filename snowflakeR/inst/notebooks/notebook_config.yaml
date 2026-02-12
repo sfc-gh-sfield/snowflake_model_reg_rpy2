@@ -11,6 +11,10 @@ context:
   schema: "SCRATCH"
 
 connection:
+  # Profile name in ~/.snowflake/connections.toml (used by sfr_connect)
+  name: "ak32940_remote_dev"
+  # Fallback explicit params (used when connections.toml is not available,
+  # e.g. in Workspace Notebooks)
   account: "ak32940"
   user: "SIMON"
   auth_method: "externalbrowser"
