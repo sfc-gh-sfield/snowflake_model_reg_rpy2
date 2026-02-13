@@ -363,9 +363,10 @@ sfr_predict <- function(reg,
   bridge <- get_bridge_module("sfr_registry_bridge")
   py_input <- reticulate::r_to_py(new_data)
 
-  # registry_predict returns a JSON string (not a dict) to bypass
- # reticulate C++ conversion bugs with SPCS results
-  json_str <- bridge$registry_predict(
+  # registry_predict writes JSON to a temp file to bypass the
+  # basic_string::substr C++ crash in reticulate/rpy2 that occurs when
+  # large strings cross the Python <-> R bridge (Workspace Notebooks).
+  json_path <- bridge$registry_predict(
     session = ctx$session,
     model_name = model_name,
     version_name = version_name,
@@ -375,7 +376,8 @@ sfr_predict <- function(reg,
     schema_name = ctx$schema_name
   )
 
-  result <- jsonlite::fromJSON(json_str)
+  on.exit(unlink(json_path), add = TRUE)
+  result <- jsonlite::fromJSON(json_path)
   .bridge_dict_to_df(result)
 }
 

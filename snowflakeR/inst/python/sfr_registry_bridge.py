@@ -511,11 +511,15 @@ def registry_predict(
 ) -> str:
     """Run inference using a registered model.
 
-    Returns a JSON string (not a dict) to avoid reticulate C++ conversion
-    bugs (basic_string::substr) that occur with SPCS prediction results.
-    The R side parses the JSON with jsonlite::fromJSON().
+    Returns the path to a temp JSON file containing the result.  Writing to
+    a file instead of returning a string avoids the ``basic_string::substr``
+    C++ crash in reticulate / rpy2 that occurs when large strings cross the
+    Python <-> R bridge (especially in Workspace Notebooks where the call
+    stack is Python -> rpy2 -> R -> reticulate -> Python -> back).
+    The R side reads and parses the file with ``jsonlite::fromJSON()``.
     """
     import json
+    import tempfile
 
     from snowflake.ml.registry import Registry
 
@@ -543,11 +547,16 @@ def registry_predict(
     result_df = result.to_pandas()
     result_df.columns = [c.strip('"').lower() for c in result_df.columns]
 
-    # Serialize as JSON to bypass reticulate dict conversion entirely.
-    # This avoids the basic_string::substr C++ bug that occurs when
-    # reticulate converts complex Python dicts with SPCS result data.
     d = _pandas_to_r_dict(result_df)
-    return json.dumps(d)
+
+    # Write JSON to a temp file so the string never crosses the
+    # reticulate / rpy2 C++ bridge.  The R side reads the file.
+    tmp = tempfile.NamedTemporaryFile(
+        mode="w", suffix=".json", delete=False, prefix="sfr_predict_"
+    )
+    json.dump(d, tmp)
+    tmp.close()
+    return tmp.name
 
 
 def registry_predict_local(
