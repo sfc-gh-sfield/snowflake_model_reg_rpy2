@@ -722,8 +722,19 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
 
   parsed <- jsonlite::fromJSON(json_str)
 
-  # Normal case: jsonlite converts the JSON array into a data.frame
+  # Empty array "[]": service exists but no containers provisioned yet.
+  # jsonlite::fromJSON("[]") returns list() (length 0) or a 0-row data.frame.
+  is_empty <- (is.data.frame(parsed) && nrow(parsed) == 0) ||
+              (is.list(parsed) && length(parsed) == 0)
+  if (is_empty) {
+    return(list(
+      status     = "PENDING",
+      message    = "No containers provisioned yet",
+      containers = NULL
+    ))
+  }
 
+  # Normal case: jsonlite converts the JSON array into a data.frame
   if (is.data.frame(parsed) && nrow(parsed) > 0 && "status" %in% names(parsed)) {
     statuses <- toupper(as.character(parsed$status))
     if (any(statuses == "FAILED")) {

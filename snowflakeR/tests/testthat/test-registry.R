@@ -296,6 +296,16 @@ test_that(".parse_service_status_json handles empty/NA input", {
 })
 
 
+test_that(".parse_service_status_json handles empty array (no containers yet)", {
+  # SYSTEM$GET_SERVICE_STATUS returns "[]" when service exists but
+  # no containers are provisioned yet (e.g. suspended or just created)
+  out <- .parse_service_status_json("[]")
+  expect_equal(out$status, "PENDING")
+  expect_equal(out$message, "No containers provisioned yet")
+  expect_null(out$containers)
+})
+
+
 test_that(".parse_service_status_json handles RUNNING as READY", {
   json <- '[{"status":"RUNNING","message":"Active"}]'
   out <- .parse_service_status_json(json)
