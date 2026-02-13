@@ -97,7 +97,7 @@ Here's the architecture:
 │              Snowflake Workspace Notebook              │
 │                                                        │
 │   ┌───────────────┐      ┌──────────────────────────┐  │
-│   │ Python Kernel │◄────►│   R Session (micromamba) │  │
+│   │ Python Kernel │◄────►│      R Session           │  │
 │   │               │ rpy2 │                          │  │
 │   │   %%R magic   │      │    ┌──────────────────┐  │  │
 │   │               │      │    │    snowflakeR    │  │  │
