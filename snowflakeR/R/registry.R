@@ -673,6 +673,9 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
 #' Useful after [sfr_deploy_model()] since SPCS services take several minutes
 #' to provision.
 #'
+#' Uses `SYSTEM$GET_SERVICE_STATUS()` for reliable status checks regardless
+#' of session context.
+#'
 #' @param reg An `sfr_model_registry` or `sfr_connection` object. Used to
 #'   resolve the database and schema where the service lives.
 #' @param service_name Character. Name of the SPCS service.
@@ -696,50 +699,63 @@ sfr_wait_for_service <- function(reg,
                                  poll_sec = 15,
                                  verbose = TRUE) {
   ctx <- resolve_registry_context(reg)
-  # Extract conn for sfr_query -- reg may be sfr_model_registry or sfr_connection
-
   conn <- if (inherits(reg, "sfr_model_registry")) reg$conn else reg
   stopifnot(is.character(service_name), length(service_name) == 1)
 
-  # Build the SHOW SERVICES query scoped to the correct schema
-  show_sql <- paste0("SHOW SERVICES LIKE '", service_name, "'")
+  # Build a fully-qualified service name for SYSTEM$GET_SERVICE_STATUS
+  svc_fqn <- toupper(service_name)
   if (!is.null(ctx$database_name) && !is.null(ctx$schema_name)) {
-    show_sql <- paste0(
-      show_sql, " IN SCHEMA ",
-      ctx$database_name, ".", ctx$schema_name
+    svc_fqn <- paste0(
+      toupper(ctx$database_name), ".",
+      toupper(ctx$schema_name), ".",
+      toupper(service_name)
     )
   }
 
+  status_sql <- paste0(
+    "SELECT SYSTEM$GET_SERVICE_STATUS('", svc_fqn, "') AS status_json"
+  )
+
   deadline <- Sys.time() + timeout_min * 60
-  attempt <- 0L
 
   if (verbose) {
     cli::cli_inform(c(
-      "i" = "Waiting for service {.val {service_name}} (timeout: {timeout_min} min) ..."
+      "i" = "Waiting for service {.val {svc_fqn}} (timeout: {timeout_min} min) ...",
+      "i" = "Query: {.code {status_sql}}"
     ))
   }
 
   start_time <- Sys.time()
 
   repeat {
-    attempt <- attempt + 1L
-    # Query service status (scoped to registry schema)
-    status_df <- tryCatch(
-      sfr_query(conn, show_sql),
-      error = function(e) NULL
-    )
+    # Query service status using SYSTEM$GET_SERVICE_STATUS
+    current <- tryCatch({
+      result <- sfr_query(conn, status_sql, .keep_case = TRUE)
+      json_str <- as.character(result$status_json[1])
 
-    current <- if (!is.null(status_df) && nrow(status_df) > 0) {
-      # Column name may vary (status or STATUS) -- use tolower
-      status_col <- intersect(c("status"), tolower(names(status_df)))
-      if (length(status_col) > 0) {
-        as.character(status_df[[status_col[1]]][1])
+      if (is.na(json_str) || nchar(json_str) == 0) {
+        "PENDING"
       } else {
-        "UNKNOWN"
+        # Parse JSON: returns array of container statuses
+        # e.g. [{"status":"READY","message":"Running",...}]
+        parsed <- jsonlite::fromJSON(json_str)
+        if (is.data.frame(parsed) && "status" %in% names(parsed)) {
+          as.character(parsed$status[1])
+        } else if (is.list(parsed) && length(parsed) > 0) {
+          as.character(parsed[[1]]$status %||% "UNKNOWN")
+        } else {
+          "PENDING"
+        }
       }
-    } else {
-      "NOT_FOUND"
-    }
+    }, error = function(e) {
+      # Surface the error on first few attempts so the user sees it
+      msg <- conditionMessage(e)
+      if (verbose) {
+        cli::cli_inform("  (query error: {msg})")
+      }
+      # Service not yet visible -- treat as pending
+      "PENDING"
+    })
 
     elapsed_min <- round(as.numeric(difftime(
       Sys.time(), start_time, units = "mins"
@@ -749,23 +765,23 @@ sfr_wait_for_service <- function(reg,
       cli::cli_inform("  [{elapsed_min} min] Status: {.val {current}}")
     }
 
-    if (toupper(current) == "RUNNING") {
+    if (toupper(current) %in% c("READY", "RUNNING")) {
       if (verbose) {
-        cli::cli_inform(c("v" = "Service {.val {service_name}} is running."))
+        cli::cli_inform(c("v" = "Service {.val {svc_fqn}} is running."))
       }
       return(invisible(TRUE))
     }
 
     if (toupper(current) %in% c("FAILED", "DELETING", "DELETED")) {
       cli::cli_abort(c(
-        "x" = "Service {.val {service_name}} entered state {.val {current}}.",
+        "x" = "Service {.val {svc_fqn}} entered state {.val {current}}.",
         "i" = "Check service logs for details."
       ))
     }
 
     if (Sys.time() >= deadline) {
       cli::cli_abort(c(
-        "x" = "Timeout ({timeout_min} min) waiting for service {.val {service_name}}.",
+        "x" = "Timeout ({timeout_min} min) waiting for service {.val {svc_fqn}}.",
         "i" = "Last status: {.val {current}}.",
         "i" = "Increase {.arg timeout_min} or check SPCS logs."
       ))

@@ -25,7 +25,8 @@ Imports:
     DBI,
     reticulate (>= 1.34),
     cli,
-    rlang
+    rlang,
+    jsonlite
 Suggests:
     snowflakeauth,
     RcppTOML,
