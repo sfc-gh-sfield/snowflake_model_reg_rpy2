@@ -177,6 +177,8 @@ def query_to_dict(session, sql):
     if nrows == 0:
         return {"columns": cols, "data": {c: [] for c in cols}, "nrows": 0}
 
+    import datetime
+
     # Use .tolist() to convert numpy scalars to native Python types
     # (int, float, str).  This avoids the NumPy ABI mismatch because
     # reticulate never sees numpy array objects.
@@ -185,6 +187,11 @@ def query_to_dict(session, sql):
     for col in cols:
         na_mask = pdf[col].isna()
         vals = pdf[col].tolist()
+
+        # Convert datetime objects to ISO strings for clean R output
+        if vals and isinstance(vals[0], (datetime.datetime, datetime.date)):
+            vals = [v.isoformat() if isinstance(v, (datetime.datetime, datetime.date)) else v for v in vals]
+
         if na_mask.any():
             data[col] = [_NA if is_na else v for v, is_na in zip(vals, na_mask)]
         else:

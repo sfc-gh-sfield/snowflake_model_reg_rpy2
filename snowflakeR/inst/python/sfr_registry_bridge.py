@@ -25,7 +25,13 @@ import pandas as pd
 def _pandas_to_r_dict(pdf):
     """Convert a pandas DataFrame to a column-oriented dict with native Python
     types via Series.tolist().  This avoids NumPy ABI issues with reticulate
-    and is more efficient than the previous JSON round-trip approach."""
+    and is more efficient than the previous JSON round-trip approach.
+
+    Datetime columns are converted to ISO-format strings to avoid ugly
+    POSIX timestamp objects in R output.
+    """
+    import datetime
+
     _NA = "NA_SENTINEL_"
     clean_cols = [c.strip('"') for c in pdf.columns]
     pdf.columns = clean_cols
@@ -39,6 +45,11 @@ def _pandas_to_r_dict(pdf):
     for col in cols:
         na_mask = pdf[col].isna()
         vals = pdf[col].tolist()
+
+        # Convert datetime objects to ISO strings
+        if vals and isinstance(vals[0], (datetime.datetime, datetime.date)):
+            vals = [v.isoformat() if isinstance(v, (datetime.datetime, datetime.date)) else v for v in vals]
+
         if na_mask.any():
             data[col] = [_NA if is_na else v for v, is_na in zip(vals, na_mask)]
         else:
