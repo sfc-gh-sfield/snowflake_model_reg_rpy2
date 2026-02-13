@@ -251,18 +251,41 @@ sfr_load_notebook_config <- function(conn, config_path = "notebook_config.yaml")
 #' Ensures all notebook table references are fully qualified as recommended
 #' by Snowflake for Workspace Notebooks.
 #'
+#' By default, uses the connection's current database and schema. Pass
+#' `database` and/or `schema` to override -- useful when referencing tables
+#' in a different schema or database without changing the session context.
+#'
 #' @param conn An `sfr_connection` object.
 #' @param table_name Character. Unqualified table name.
+#' @param database Character. Database name override. Default: connection's
+#'   current database.
+#' @param schema Character. Schema name override. Default: connection's
+#'   current schema.
 #'
 #' @returns Character. Fully qualified table name.
 #'
+#' @examples
+#' \dontrun{
+#' # Uses connection's current database/schema
+#' sfr_fqn(conn, "MY_TABLE")
+#' # => "MY_DB.MY_SCHEMA.MY_TABLE"
+#'
+#' # Override schema (same database)
+#' sfr_fqn(conn, "MY_TABLE", schema = "OTHER_SCHEMA")
+#' # => "MY_DB.OTHER_SCHEMA.MY_TABLE"
+#'
+#' # Override both
+#' sfr_fqn(conn, "MY_TABLE", database = "OTHER_DB", schema = "RAW")
+#' # => "OTHER_DB.RAW.MY_TABLE"
+#' }
+#'
 #' @export
-sfr_fqn <- function(conn, table_name) {
+sfr_fqn <- function(conn, table_name, database = NULL, schema = NULL) {
   validate_connection(conn)
   stopifnot(is.character(table_name), length(table_name) == 1)
 
-  db <- conn$database
-  sc <- conn$schema
+  db <- database %||% conn$database
+  sc <- schema %||% conn$schema
 
   if (is.null(db) || is.null(sc)) {
     cli::cli_warn(c(

@@ -4,19 +4,29 @@
 \alias{sfr_query}
 \title{Execute a SQL query and return results}
 \usage{
-sfr_query(conn, sql)
+sfr_query(conn, sql, .keep_case = FALSE)
 }
 \arguments{
 \item{conn}{An \code{sfr_connection} object from \code{\link[=sfr_connect]{sfr_connect()}}.}
 
 \item{sql}{Character. SQL query string.}
+
+\item{.keep_case}{Logical. If \code{TRUE}, preserve original column name
+casing from Snowflake. Default: \code{FALSE} (lowercase).}
 }
 \value{
 A data.frame with query results.
 }
 \description{
 Runs a SQL query against Snowflake and returns the result as an R
-data.frame.
+data.frame. The entire pandas/numpy conversion is done on the Python
+side (via JSON round-trip) to avoid NumPy 1.x/2.x ABI issues that
+can cause reticulate to fail when converting numpy-backed DataFrames.
+}
+\details{
+Column names are lowercased by default for R friendliness. Use
+\code{.keep_case = TRUE} to preserve original Snowflake casing (needed
+for DBI/dbplyr compatibility).
 }
 \examples{
 \dontrun{

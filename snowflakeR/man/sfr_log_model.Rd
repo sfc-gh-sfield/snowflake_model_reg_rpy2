@@ -54,7 +54,13 @@ environment. Defaults include \code{r-base} and \code{rpy2}.}
 \item{pip_requirements}{Character vector. Additional pip packages.}
 
 \item{target_platforms}{Character. One of \code{"SNOWPARK_CONTAINER_SERVICES"},
-\code{"WAREHOUSE"}, or both. Default: \code{"SNOWPARK_CONTAINER_SERVICES"}.}
+\code{"WAREHOUSE"}, or both. Default: \code{"SNOWPARK_CONTAINER_SERVICES"}.
+
+\strong{Important:} R models require \code{rpy2} and \code{r-base} at inference time.
+These packages are \strong{not available} in the Snowflake warehouse Anaconda
+channel, so \code{"WAREHOUSE"} inference is not currently supported for R
+models. Use \code{"SNOWPARK_CONTAINER_SERVICES"} (which installs packages in
+a container) or test locally with \code{\link[=sfr_predict_local]{sfr_predict_local()}}.}
 
 \item{comment}{Character. Description of the model.}
 

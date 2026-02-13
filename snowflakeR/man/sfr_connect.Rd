@@ -20,7 +20,7 @@ sfr_connect(
 }
 \arguments{
 \item{name}{Character. Named connection from \code{connections.toml}. If \code{NULL},
-uses the default connection.}
+uses the \verb{[default]} profile, or the only profile if there is exactly one.}
 
 \item{account}{Character. Snowflake account identifier.}
 
@@ -35,10 +35,11 @@ uses the default connection.}
 \item{role}{Character. Role to use.}
 
 \item{authenticator}{Character. Authentication method (e.g.,
-\code{"externalbrowser"}, \code{"snowflake"}, \code{"oauth"}).}
+\code{"externalbrowser"}, \code{"snowflake"}, \code{"SNOWFLAKE_JWT"}, \code{"oauth"}).}
 
 \item{private_key_file}{Character. Path to PEM-encoded private key for
-key-pair authentication.}
+key-pair authentication. Also read from \code{connections.toml} field
+\code{private_key_path}.}
 
 \item{...}{Additional connection parameters passed to Snowpark session
 builder or \code{snowflakeauth::snowflake_connection()}.}
@@ -57,7 +58,7 @@ Supports multiple authentication methods:
 \itemize{
 \item \strong{Auto-detect:} In Workspace Notebooks, wraps the active Snowpark session.
 Locally, reads \code{connections.toml} / \code{config.toml} (via \code{snowflakeauth} if
-installed) or uses explicit parameters.
+installed, or directly via RcppTOML / Python toml as fallback).
 \item \strong{Named connection:} Pass \code{name} to select a connection from
 \code{connections.toml}.
 \item \strong{Explicit parameters:} Pass \code{account}, \code{user}, \code{authenticator}, etc.
@@ -69,9 +70,16 @@ installed) or uses explicit parameters.
 conn <- sfr_connect()
 
 # Named connection
-conn <- sfr_connect(name = "production")
+conn <- sfr_connect(name = "my_profile")
 
-# Explicit parameters
+# Explicit parameters with key-pair auth
+conn <- sfr_connect(
+  account = "xy12345.us-east-1",
+  user = "MYUSER",
+  private_key_file = "~/.snowflake/keys/rsa_key.p8"
+)
+
+# Explicit parameters with browser SSO
 conn <- sfr_connect(
   account = "xy12345.us-east-1",
   user = "MYUSER",

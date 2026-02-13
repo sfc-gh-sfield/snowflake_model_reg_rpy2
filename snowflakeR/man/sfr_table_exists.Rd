@@ -9,7 +9,8 @@ sfr_table_exists(conn, table_name)
 \arguments{
 \item{conn}{An \code{sfr_connection} object.}
 
-\item{table_name}{Character. Name of the table.}
+\item{table_name}{Character. Name of the table (may be fully qualified
+as \code{DB.SCHEMA.TABLE}).}
 }
 \value{
 Logical.

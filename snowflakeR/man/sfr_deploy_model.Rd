@@ -11,7 +11,8 @@ sfr_deploy_model(
   service_name,
   compute_pool,
   image_repo,
-  max_instances = 1L
+  max_instances = 1L,
+  force = FALSE
 )
 }
 \arguments{
@@ -28,6 +29,9 @@ sfr_deploy_model(
 \item{image_repo}{Character. Image repository.}
 
 \item{max_instances}{Integer. Max service instances. Default: 1.}
+
+\item{force}{Logical. If \code{TRUE} and the service already exists, drop it
+first and redeploy. Default: \code{FALSE}.}
 }
 \value{
 Invisibly returns a list with deployment info.
