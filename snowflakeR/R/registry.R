@@ -733,8 +733,9 @@ sfr_wait_for_service <- function(reg,
   repeat {
     # Query service status using SYSTEM$GET_SERVICE_STATUS
     current <- tryCatch({
-      result <- sfr_query(conn, status_sql, .keep_case = TRUE)
-      json_str <- as.character(result$status_json[1])
+      result <- sfr_query(conn, status_sql)
+      # Column name gets uppercased by Snowflake; access by position
+      json_str <- as.character(result[[1]][1])
 
       if (is.na(json_str) || nchar(json_str) == 0) {
         "PENDING"
