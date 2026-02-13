@@ -141,6 +141,94 @@ def pandas_to_r_dict(pdf):
     return {col: pdf[col].tolist() for col in cols}
 
 
+def generate_jwt_token(session) -> str:
+    """Generate a JWT token from the session's key-pair credentials.
+
+    Extracts the private key from the Snowpark session's connection
+    and generates a short-lived JWT suitable for SPCS REST endpoint
+    authentication.
+
+    Args:
+        session: Snowpark Session object (must use key-pair auth).
+
+    Returns:
+        JWT token string.
+
+    Raises:
+        RuntimeError: if the session doesn't use key-pair auth or
+            the token cannot be generated.
+    """
+    import hashlib
+    import base64
+    import time
+
+    try:
+        import jwt as pyjwt
+    except ImportError:
+        raise RuntimeError(
+            "PyJWT package is required for JWT generation. "
+            "Install with: pip install PyJWT"
+        )
+    from cryptography.hazmat.primitives import serialization
+
+    # Navigate to the underlying connector to extract credentials.
+    # The Snowpark connector stores the private key as DER bytes
+    # on conn_obj._private_key after key-pair authentication.
+    try:
+        conn_obj = session._conn._conn
+        pk_data = getattr(conn_obj, "_private_key", None)
+    except AttributeError:
+        pk_data = None
+
+    if pk_data is None:
+        raise RuntimeError(
+            "Cannot extract private key from session. "
+            "This connection may not use key-pair authentication."
+        )
+
+    # pk_data is DER-encoded bytes -- load into a cryptography key object
+    from cryptography.hazmat.backends import default_backend
+
+    if isinstance(pk_data, bytes):
+        pk = serialization.load_der_private_key(
+            pk_data, password=None, backend=default_backend()
+        )
+    else:
+        raise RuntimeError(
+            f"Unexpected private key type: {type(pk_data)}. "
+            "Expected DER-encoded bytes."
+        )
+
+    pub = pk.public_key()
+
+    pub_der = pub.public_bytes(
+        serialization.Encoding.DER,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    fp = base64.standard_b64encode(
+        hashlib.sha256(pub_der).digest()
+    ).decode("utf-8")
+
+    # Get account and user from the session
+    account = (
+        session.get_current_account()
+        .strip('"')
+        .upper()
+        .replace(".", "-")
+    )
+    user = session.get_current_user().strip('"').upper()
+
+    now = int(time.time())
+    payload = {
+        "iss": f"{account}.{user}.SHA256:{fp}",
+        "sub": f"{account}.{user}",
+        "iat": now,
+        "exp": now + 3600,
+    }
+
+    return pyjwt.encode(payload, pk, algorithm="RS256")
+
+
 def query_to_dict(session, sql):
     """
     Execute a SQL query and return the result as a column-oriented dict
