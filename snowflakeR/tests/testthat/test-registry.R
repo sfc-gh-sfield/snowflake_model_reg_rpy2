@@ -190,3 +190,157 @@ test_that("sfr_model prints cleanly", {
   )
   expect_message(print(m), "sfr_model")
 })
+
+
+# -- .resolve_service_fqn -----------------------------------------------------
+
+test_that(".resolve_service_fqn uses registry context db/schema", {
+  ctx <- list(database_name = "ML_DB", schema_name = "MODELS")
+  mock_conn <- structure(
+    list(
+      session = NULL, account = "test", database = "CONN_DB",
+      schema = "CONN_SC", warehouse = "WH", auth_method = "test",
+      environment = "test", created_at = Sys.time()
+    ),
+    class = c("sfr_connection", "list")
+  )
+
+  fqn <- .resolve_service_fqn(ctx, mock_conn, "my_svc")
+  expect_equal(fqn, "ML_DB.MODELS.MY_SVC")
+})
+
+
+test_that(".resolve_service_fqn falls back to conn fields when ctx is NULL", {
+  # This is the plain-connection case: resolve_registry_context returns NULLs
+  ctx <- list(database_name = NULL, schema_name = NULL)
+  mock_conn <- structure(
+    list(
+      session = NULL, account = "test", database = "SIMON",
+      schema = "SCRATCH", warehouse = "WH", auth_method = "test",
+      environment = "test", created_at = Sys.time()
+    ),
+    class = c("sfr_connection", "list")
+  )
+
+  fqn <- .resolve_service_fqn(ctx, mock_conn, "mpg_service")
+  expect_equal(fqn, "SIMON.SCRATCH.MPG_SERVICE")
+})
+
+
+test_that(".resolve_service_fqn returns bare name when no db/schema anywhere", {
+  ctx <- list(database_name = NULL, schema_name = NULL)
+  mock_conn <- structure(
+    list(
+      session = NULL, account = "test", database = NULL,
+      schema = NULL, warehouse = "WH", auth_method = "test",
+      environment = "test", created_at = Sys.time()
+    ),
+    class = c("sfr_connection", "list")
+  )
+
+  fqn <- .resolve_service_fqn(ctx, mock_conn, "my_svc")
+  expect_equal(fqn, "MY_SVC")
+})
+
+
+# -- .parse_service_status_json ------------------------------------------------
+
+test_that(".parse_service_status_json handles READY single-container JSON", {
+  json <- '[{"status":"READY","message":"Running","containerName":"model-inference","instanceId":"0"}]'
+  out <- .parse_service_status_json(json)
+
+  expect_equal(out$status, "READY")
+  expect_equal(out$message, "Running")
+  expect_true(is.data.frame(out$containers))
+  expect_equal(nrow(out$containers), 1)
+})
+
+
+test_that(".parse_service_status_json handles PENDING status", {
+  json <- '[{"status":"PENDING","message":"Waiting for compute","containerName":"model-inference","instanceId":"0"}]'
+  out <- .parse_service_status_json(json)
+
+  expect_equal(out$status, "PENDING")
+  expect_equal(out$message, "Waiting for compute")
+})
+
+
+test_that(".parse_service_status_json handles FAILED status", {
+  json <- '[{"status":"FAILED","message":"Image pull error","containerName":"model-inference","instanceId":"0"}]'
+  out <- .parse_service_status_json(json)
+
+  expect_equal(out$status, "FAILED")
+  expect_equal(out$message, "Image pull error")
+})
+
+
+test_that(".parse_service_status_json derives overall status from multiple containers", {
+  # All READY → READY
+  json_all_ready <- '[{"status":"READY","message":"Running"},{"status":"READY","message":"Running"}]'
+  expect_equal(.parse_service_status_json(json_all_ready)$status, "READY")
+
+  # One FAILED → FAILED
+  json_one_fail <- '[{"status":"READY","message":"Running"},{"status":"FAILED","message":"OOM"}]'
+  expect_equal(.parse_service_status_json(json_one_fail)$status, "FAILED")
+
+  # Mixed READY + PENDING → PENDING (first non-ready)
+  json_mixed <- '[{"status":"PENDING","message":"Starting"},{"status":"READY","message":"Running"}]'
+  expect_equal(.parse_service_status_json(json_mixed)$status, "PENDING")
+})
+
+
+test_that(".parse_service_status_json handles empty/NA input", {
+  expect_equal(.parse_service_status_json(NA_character_)$status, "UNKNOWN")
+  expect_equal(.parse_service_status_json("")$status, "UNKNOWN")
+  expect_equal(.parse_service_status_json("  ")$status, "UNKNOWN")
+})
+
+
+test_that(".parse_service_status_json handles RUNNING as READY", {
+  json <- '[{"status":"RUNNING","message":"Active"}]'
+  out <- .parse_service_status_json(json)
+  # RUNNING is in the READY/RUNNING success set
+  expect_equal(out$status, "READY")
+})
+
+
+# -- sfr_get_service_status validation ----------------------------------------
+
+test_that("sfr_get_service_status rejects invalid first arg", {
+  expect_error(
+    sfr_get_service_status("not_valid", "svc"),
+    "sfr_model_registry.*sfr_connection"
+  )
+})
+
+
+test_that("sfr_get_service_status validates service_name type", {
+  mock_conn <- structure(
+    list(
+      session = NULL, account = "test", database = "DB",
+      schema = "SC", warehouse = "WH", auth_method = "test",
+      environment = "test", created_at = Sys.time()
+    ),
+    class = c("sfr_connection", "list")
+  )
+
+  expect_error(sfr_get_service_status(mock_conn, 123))
+  expect_error(sfr_get_service_status(mock_conn, c("a", "b")))
+})
+
+
+# -- sfr_wait_for_service validation ------------------------------------------
+
+test_that("sfr_wait_for_service validates service_name type", {
+  mock_conn <- structure(
+    list(
+      session = NULL, account = "test", database = "DB",
+      schema = "SC", warehouse = "WH", auth_method = "test",
+      environment = "test", created_at = Sys.time()
+    ),
+    class = c("sfr_connection", "list")
+  )
+
+  expect_error(sfr_wait_for_service(mock_conn, 123))
+  expect_error(sfr_wait_for_service(mock_conn, c("a", "b")))
+})

@@ -670,14 +670,145 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
 }
 
 
+# =============================================================================
+# Service status helpers
+# =============================================================================
+
+# Internal: build a fully-qualified service name.
+#
+# Falls back to conn$database / conn$schema when the registry context
+# doesn't supply them (i.e., when `reg` is a plain sfr_connection).
+#
+# @param ctx  List from resolve_registry_context().
+# @param conn An sfr_connection.
+# @param service_name Character. Unqualified service name.
+# @returns Character. The (possibly qualified) service name, uppercased.
+# @noRd
+.resolve_service_fqn <- function(ctx, conn, service_name) {
+  db <- ctx$database_name %||% conn$database
+  sc <- ctx$schema_name %||% conn$schema
+  svc <- toupper(service_name)
+
+  if (!is.null(db) && !is.null(sc)) {
+    paste0(toupper(db), ".", toupper(sc), ".", svc)
+  } else {
+    svc
+  }
+}
+
+
+# Internal: parse the JSON returned by SYSTEM$GET_SERVICE_STATUS.
+#
+# Snowflake returns a JSON array of per-container status objects, e.g.:
+#   [{"status":"READY","message":"Running","containerName":"model-inference",...}]
+#
+# We derive an overall status from the individual container statuses:
+#   - Any container FAILED  → overall FAILED
+#   - All containers READY  → overall READY
+#   - Otherwise             → status of the first container (usually PENDING)
+#
+# @param json_str Character. Raw JSON string.
+# @returns A list with `status` (character), `message` (character or NA),
+#   and `containers` (data.frame or NULL).
+# @noRd
+.parse_service_status_json <- function(json_str) {
+  if (is.na(json_str) || !nzchar(trimws(json_str))) {
+    return(list(
+      status     = "UNKNOWN",
+      message    = "Empty response from SYSTEM$GET_SERVICE_STATUS",
+      containers = NULL
+    ))
+  }
+
+  parsed <- jsonlite::fromJSON(json_str)
+
+  # Normal case: jsonlite converts the JSON array into a data.frame
+
+  if (is.data.frame(parsed) && nrow(parsed) > 0 && "status" %in% names(parsed)) {
+    statuses <- toupper(as.character(parsed$status))
+    if (any(statuses == "FAILED")) {
+      overall <- "FAILED"
+    } else if (all(statuses %in% c("READY", "RUNNING"))) {
+      overall <- "READY"
+    } else {
+      overall <- statuses[1]
+    }
+    msg <- if ("message" %in% names(parsed)) as.character(parsed$message[1]) else NA_character_
+    return(list(status = overall, message = msg, containers = parsed))
+  }
+
+  # Edge case: parsed as a list of lists (e.g., single-element array)
+  if (is.list(parsed) && length(parsed) > 0) {
+    first <- if (is.list(parsed[[1]])) parsed[[1]] else parsed
+    return(list(
+      status     = toupper(as.character(first$status %||% "UNKNOWN")),
+      message    = as.character(first$message %||% NA_character_),
+      containers = NULL
+    ))
+  }
+
+  list(
+    status     = "UNKNOWN",
+    message    = paste("Unexpected JSON format:", substr(json_str, 1, 200)),
+    containers = NULL
+  )
+}
+
+
+#' Get the current status of an SPCS service
+#'
+#' Queries `SYSTEM$GET_SERVICE_STATUS()` and returns a structured result.
+#' Useful for one-off status checks without starting a polling loop.
+#'
+#' @param reg An `sfr_model_registry` or `sfr_connection` object.
+#' @param service_name Character. Name of the SPCS service.
+#'
+#' @returns A list with:
+#'   \describe{
+#'     \item{status}{Character. Overall service status
+#'       (e.g. `"READY"`, `"PENDING"`, `"FAILED"`).}
+#'     \item{message}{Character. Human-readable status message, or `NA`.}
+#'     \item{containers}{A data.frame of per-container statuses, or `NULL`
+#'       if the response couldn't be parsed as a table.}
+#'     \item{fqn}{Character. The fully-qualified service name used in the
+#'       query.}
+#'   }
+#'
+#' @examples
+#' \dontrun{
+#' st <- sfr_get_service_status(reg, "my_svc")
+#' st$status   # "READY"
+#' st$message  # "Running"
+#' }
+#'
+#' @export
+sfr_get_service_status <- function(reg, service_name) {
+  ctx  <- resolve_registry_context(reg)
+  conn <- if (inherits(reg, "sfr_model_registry")) reg$conn else reg
+  stopifnot(is.character(service_name), length(service_name) == 1L)
+
+  svc_fqn <- .resolve_service_fqn(ctx, conn, service_name)
+
+  sql <- paste0(
+    "SELECT SYSTEM$GET_SERVICE_STATUS('", svc_fqn, "') AS status_json"
+  )
+
+  # sfr_query() lowercases column names by default, so the alias
+  # STATUS_JSON (Snowflake uppercases it) becomes status_json in R.
+  result   <- sfr_query(conn, sql)
+  json_str <- as.character(result$status_json[1])
+
+  out <- .parse_service_status_json(json_str)
+  out$fqn <- svc_fqn
+  out
+}
+
+
 #' Wait for an SPCS service to be ready
 #'
-#' Polls the service status until it reaches `RUNNING` or a timeout is hit.
-#' Useful after [sfr_deploy_model()] since SPCS services take several minutes
-#' to provision.
-#'
-#' Uses `SYSTEM$GET_SERVICE_STATUS()` for reliable status checks regardless
-#' of session context.
+#' Polls [sfr_get_service_status()] until the service reaches `READY`/`RUNNING`
+#' or a terminal failure state is detected. Useful after [sfr_deploy_model()]
+#' since SPCS services take several minutes to provision.
 #'
 #' @param reg An `sfr_model_registry` or `sfr_connection` object. Used to
 #'   resolve the database and schema where the service lives.
@@ -687,7 +818,7 @@ sfr_undeploy_model <- function(reg, model_name, version_name, service_name) {
 #' @param verbose Logical. Print status updates? Default: `TRUE`.
 #'
 #' @returns `TRUE` (invisibly) if the service is running; raises an error on
-#'   timeout.
+#'   terminal failure or timeout.
 #'
 #' @examples
 #' \dontrun{
@@ -701,92 +832,77 @@ sfr_wait_for_service <- function(reg,
                                  timeout_min = 10,
                                  poll_sec = 15,
                                  verbose = TRUE) {
-  ctx <- resolve_registry_context(reg)
+  stopifnot(is.character(service_name), length(service_name) == 1L)
+
+  # Resolve the FQN once for display purposes
+  ctx  <- resolve_registry_context(reg)
   conn <- if (inherits(reg, "sfr_model_registry")) reg$conn else reg
-  stopifnot(is.character(service_name), length(service_name) == 1)
+  svc_fqn <- .resolve_service_fqn(ctx, conn, service_name)
 
-  # Build a fully-qualified service name for SYSTEM$GET_SERVICE_STATUS
-  svc_fqn <- toupper(service_name)
-  if (!is.null(ctx$database_name) && !is.null(ctx$schema_name)) {
-    svc_fqn <- paste0(
-      toupper(ctx$database_name), ".",
-      toupper(ctx$schema_name), ".",
-      toupper(service_name)
-    )
-  }
-
-  status_sql <- paste0(
-    "SELECT SYSTEM$GET_SERVICE_STATUS('", svc_fqn, "') AS status_json"
-  )
-
-  deadline <- Sys.time() + timeout_min * 60
+  deadline   <- Sys.time() + timeout_min * 60
+  start_time <- Sys.time()
+  poll_count <- 0L
 
   if (verbose) {
     cli::cli_inform(c(
-      "i" = "Waiting for service {.val {svc_fqn}} (timeout: {timeout_min} min) ...",
-      "i" = "Query: {.code {status_sql}}"
+      "i" = "Waiting for service {.val {svc_fqn}} (timeout: {timeout_min} min) ..."
     ))
   }
 
-  start_time <- Sys.time()
-
   repeat {
-    # Query service status using SYSTEM$GET_SERVICE_STATUS
-    current <- tryCatch({
-      result <- sfr_query(conn, status_sql)
-      # Column name gets uppercased by Snowflake; access by position
-      json_str <- as.character(result[[1]][1])
+    poll_count <- poll_count + 1L
 
-      if (is.na(json_str) || nchar(json_str) == 0) {
-        "PENDING"
-      } else {
-        # Parse JSON: returns array of container statuses
-        # e.g. [{"status":"READY","message":"Running",...}]
-        parsed <- jsonlite::fromJSON(json_str)
-        if (is.data.frame(parsed) && "status" %in% names(parsed)) {
-          as.character(parsed$status[1])
-        } else if (is.list(parsed) && length(parsed) > 0) {
-          as.character(parsed[[1]]$status %||% "UNKNOWN")
-        } else {
-          "PENDING"
-        }
+    # Query the service status; wrap in tryCatch so transient errors
+    # (e.g., service not yet visible in metadata) don't abort the loop.
+    st <- tryCatch(
+      sfr_get_service_status(reg, service_name),
+      error = function(e) {
+        list(
+          status  = "QUERY_ERROR",
+          message = conditionMessage(e),
+          fqn     = svc_fqn
+        )
       }
-    }, error = function(e) {
-      # Surface the error on first few attempts so the user sees it
-      msg <- conditionMessage(e)
-      if (verbose) {
-        cli::cli_inform("  (query error: {msg})")
-      }
-      # Service not yet visible -- treat as pending
-      "PENDING"
-    })
+    )
 
     elapsed_min <- round(as.numeric(difftime(
       Sys.time(), start_time, units = "mins"
     )), 1)
 
     if (verbose) {
-      cli::cli_inform("  [{elapsed_min} min] Status: {.val {current}}")
+      status_label <- st$status
+      if (!is.null(st$message) && !is.na(st$message)) {
+        status_label <- paste0(st$status, " — ", st$message)
+      }
+      cli::cli_inform("  [{elapsed_min} min] Status: {.val {status_label}}")
     }
 
-    if (toupper(current) %in% c("READY", "RUNNING")) {
+    # Terminal success
+    if (toupper(st$status) %in% c("READY", "RUNNING")) {
       if (verbose) {
         cli::cli_inform(c("v" = "Service {.val {svc_fqn}} is running."))
       }
       return(invisible(TRUE))
     }
 
-    if (toupper(current) %in% c("FAILED", "DELETING", "DELETED")) {
+    # Terminal failure
+    if (toupper(st$status) %in% c("FAILED", "DELETED")) {
+      detail <- if (!is.null(st$message) && !is.na(st$message)) {
+        st$message
+      } else {
+        "Check service logs for details."
+      }
       cli::cli_abort(c(
-        "x" = "Service {.val {svc_fqn}} entered state {.val {current}}.",
-        "i" = "Check service logs for details."
+        "x" = "Service {.val {svc_fqn}} entered state {.val {st$status}}.",
+        "i" = detail
       ))
     }
 
+    # Timeout
     if (Sys.time() >= deadline) {
       cli::cli_abort(c(
         "x" = "Timeout ({timeout_min} min) waiting for service {.val {svc_fqn}}.",
-        "i" = "Last status: {.val {current}}.",
+        "i" = "Last status: {.val {st$status}}.",
         "i" = "Increase {.arg timeout_min} or check SPCS logs."
       ))
     }
