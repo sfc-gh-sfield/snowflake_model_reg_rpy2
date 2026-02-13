@@ -497,8 +497,15 @@ def registry_predict(
     service_name: Optional[str] = None,
     database_name: Optional[str] = None,
     schema_name: Optional[str] = None,
-) -> pd.DataFrame:
-    """Run inference using a registered model."""
+) -> str:
+    """Run inference using a registered model.
+
+    Returns a JSON string (not a dict) to avoid reticulate C++ conversion
+    bugs (basic_string::substr) that occur with SPCS prediction results.
+    The R side parses the JSON with jsonlite::fromJSON().
+    """
+    import json
+
     from snowflake.ml.registry import Registry
 
     reg_kwargs = {"session": session}
@@ -523,9 +530,13 @@ def registry_predict(
 
     result = mv.run(sp_df, **run_kwargs)
     result_df = result.to_pandas()
-    result_df.columns = [c.lower() for c in result_df.columns]
+    result_df.columns = [c.strip('"').lower() for c in result_df.columns]
 
-    return _pandas_to_r_dict(result_df)
+    # Serialize as JSON to bypass reticulate dict conversion entirely.
+    # This avoids the basic_string::substr C++ bug that occurs when
+    # reticulate converts complex Python dicts with SPCS result data.
+    d = _pandas_to_r_dict(result_df)
+    return json.dumps(d)
 
 
 def registry_predict_local(

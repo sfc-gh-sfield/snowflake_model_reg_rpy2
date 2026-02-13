@@ -363,7 +363,9 @@ sfr_predict <- function(reg,
   bridge <- get_bridge_module("sfr_registry_bridge")
   py_input <- reticulate::r_to_py(new_data)
 
-  result <- bridge$registry_predict(
+  # registry_predict returns a JSON string (not a dict) to bypass
+ # reticulate C++ conversion bugs with SPCS results
+  json_str <- bridge$registry_predict(
     session = ctx$session,
     model_name = model_name,
     version_name = version_name,
@@ -373,6 +375,7 @@ sfr_predict <- function(reg,
     schema_name = ctx$schema_name
   )
 
+  result <- jsonlite::fromJSON(json_str)
   .bridge_dict_to_df(result)
 }
 
