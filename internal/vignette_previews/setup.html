@@ -594,6 +594,50 @@ launching Jupyter.</p>
 <p>Workspace Notebooks are managed Jupyter environments inside
 Snowflake. They run a <strong>Python kernel</strong> – R is available
 via <code>rpy2</code> and <code>%%R</code> magic cells.</p>
+<p><code>snowflakeR</code> ships a <strong>self-contained
+<code>notebooks/</code> directory</strong> with all the scripts, config,
+and helpers you need. Find it with:</p>
+<div class="sourceCode" id="cb23"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a><span class="fu">system.file</span>(<span class="st">&quot;notebooks&quot;</span>, <span class="at">package =</span> <span class="st">&quot;snowflakeR&quot;</span>)</span></code></pre></div>
+<p>Upload the folder contents to your Workspace and open
+<code>workspace_quickstart.ipynb</code>. The directory includes:</p>
+<table>
+<colgroup>
+<col width="50%" />
+<col width="50%" />
+</colgroup>
+<thead>
+<tr class="header">
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr class="odd">
+<td><code>setup_r_environment.sh</code></td>
+<td>Installs R + packages via micromamba</td>
+</tr>
+<tr class="even">
+<td><code>r_packages.yaml</code></td>
+<td>R package list for the setup script</td>
+</tr>
+<tr class="odd">
+<td><code>r_helpers.py</code></td>
+<td>Python helpers for rpy2 / <code>%%R</code> magic setup</td>
+</tr>
+<tr class="even">
+<td><code>notebook_config.yaml.template</code></td>
+<td>Single config for warehouse, database, schema</td>
+</tr>
+<tr class="odd">
+<td><code>workspace_quickstart.ipynb</code></td>
+<td>Ready-to-run Workspace demo</td>
+</tr>
+<tr class="even">
+<td><code>local_quickstart.ipynb</code></td>
+<td>Ready-to-run local demo</td>
+</tr>
+</tbody>
+</table>
 <p><strong>Key differences from local:</strong></p>
 <table>
 <colgroup>
@@ -630,11 +674,16 @@ via <code>rpy2</code> and <code>%%R</code> magic cells.</p>
 <td><code>micromamba</code> + <code>install.packages()</code></td>
 </tr>
 <tr class="odd">
+<td>Execution context</td>
+<td>Usually set by connection</td>
+<td>Must set explicitly (<a href="https://docs.snowflake.com/en/user-guide/ui-snowsight/notebooks-in-workspaces/notebooks-in-workspaces-edit-run#set-the-execution-context">docs</a>)</td>
+</tr>
+<tr class="even">
 <td>Plotting</td>
 <td>Native plot pane</td>
 <td><code>%%R -w W -h H</code> + <code>print(p)</code></td>
 </tr>
-<tr class="even">
+<tr class="odd">
 <td>Session lifecycle</td>
 <td>Persistent</td>
 <td>Re-setup each session</td>
@@ -643,22 +692,32 @@ via <code>rpy2</code> and <code>%%R</code> magic cells.</p>
 </table>
 <p><strong>Setup steps:</strong></p>
 <ol style="list-style-type: decimal">
-<li><strong>Install R</strong> (run once per session, ~3 minutes):</li>
+<li><p><strong>Copy config:</strong>
+<code>cp notebook_config.yaml.template notebook_config.yaml</code> and
+edit with your warehouse, database, and schema.</p></li>
+<li><p><strong>Install R</strong> (run once per session, ~3
+minutes):</p></li>
 </ol>
-<div class="sourceCode" id="cb23"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb23-1"><a href="#cb23-1" tabindex="-1"></a><span class="co"># Python cell</span></span>
-<span id="cb23-2"><a href="#cb23-2" tabindex="-1"></a><span class="op">!</span>bash setup_r_environment.sh <span class="op">--</span>basic</span></code></pre></div>
-<ol start="2" style="list-style-type: decimal">
-<li><strong>Register <code>%%R</code> magic</strong>:</li>
-</ol>
-<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a><span class="im">from</span> r_helpers <span class="im">import</span> setup_r_environment</span>
-<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a>result <span class="op">=</span> setup_r_environment()</span></code></pre></div>
+<div class="sourceCode" id="cb24"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb24-1"><a href="#cb24-1" tabindex="-1"></a><span class="co"># Python cell</span></span>
+<span id="cb24-2"><a href="#cb24-2" tabindex="-1"></a><span class="op">!</span>bash setup_r_environment.sh <span class="op">--</span>basic</span></code></pre></div>
 <ol start="3" style="list-style-type: decimal">
-<li><strong>Install and load <code>snowflakeR</code></strong>:</li>
+<li><strong>Register <code>%%R</code> magic:</strong></li>
 </ol>
-<div class="sourceCode" id="cb25"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="sc">%%</span>R</span>
-<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a><span class="fu">install.packages</span>(<span class="st">&quot;path/to/snowflakeR&quot;</span>, <span class="at">repos =</span> <span class="cn">NULL</span>, <span class="at">type =</span> <span class="st">&quot;source&quot;</span>)</span>
-<span id="cb25-3"><a href="#cb25-3" tabindex="-1"></a><span class="fu">library</span>(snowflakeR)</span>
-<span id="cb25-4"><a href="#cb25-4" tabindex="-1"></a>conn <span class="ot">&lt;-</span> <span class="fu">sfr_connect</span>()   <span class="co"># auto-detects Workspace session -- no credentials needed</span></span></code></pre></div>
+<div class="sourceCode" id="cb25"><pre class="sourceCode python"><code class="sourceCode python"><span id="cb25-1"><a href="#cb25-1" tabindex="-1"></a><span class="im">from</span> r_helpers <span class="im">import</span> setup_r_environment</span>
+<span id="cb25-2"><a href="#cb25-2" tabindex="-1"></a>result <span class="op">=</span> setup_r_environment()</span></code></pre></div>
+<ol start="4" style="list-style-type: decimal">
+<li><strong>Install and load <code>snowflakeR</code>:</strong></li>
+</ol>
+<div class="sourceCode" id="cb26"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a><span class="sc">%%</span>R</span>
+<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a><span class="co"># install.packages(&quot;pak&quot;); pak::pak(&quot;Snowflake-Labs/snowflakeR&quot;)</span></span>
+<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a><span class="fu">library</span>(snowflakeR)</span>
+<span id="cb26-4"><a href="#cb26-4" tabindex="-1"></a>conn <span class="ot">&lt;-</span> <span class="fu">sfr_connect</span>()   <span class="co"># auto-detects Workspace session</span></span>
+<span id="cb26-5"><a href="#cb26-5" tabindex="-1"></a></span>
+<span id="cb26-6"><a href="#cb26-6" tabindex="-1"></a><span class="co"># Load config and set execution context</span></span>
+<span id="cb26-7"><a href="#cb26-7" tabindex="-1"></a>conn <span class="ot">&lt;-</span> <span class="fu">sfr_load_notebook_config</span>(conn)</span></code></pre></div>
+<p>All table references should use fully qualified names via
+<code>sfr_fqn()</code>:</p>
+<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a><span class="fu">sfr_write_table</span>(conn, <span class="fu">sfr_fqn</span>(conn, <span class="st">&quot;MY_TABLE&quot;</span>), my_data)</span></code></pre></div>
 <p>See <code>vignette(&quot;workspace-notebooks&quot;)</code> for the full
 Workspace guide including output helpers, PAT management, and Python-R
 data exchange.</p>
@@ -672,9 +731,9 @@ data exchange.</p>
 for SSO).</li>
 <li>Set environment variables:</li>
 </ol>
-<div class="sourceCode" id="cb26"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" tabindex="-1"></a><span class="bu">export</span> <span class="va">SNOWFLAKE_ACCOUNT</span><span class="op">=</span><span class="st">&quot;xy12345.us-east-1&quot;</span></span>
-<span id="cb26-2"><a href="#cb26-2" tabindex="-1"></a><span class="bu">export</span> <span class="va">SNOWFLAKE_USER</span><span class="op">=</span><span class="st">&quot;SVC_USER&quot;</span></span>
-<span id="cb26-3"><a href="#cb26-3" tabindex="-1"></a><span class="bu">export</span> <span class="va">RETICULATE_PYTHON</span><span class="op">=</span><span class="st">&quot;/usr/bin/python3&quot;</span></span></code></pre></div>
+<div class="sourceCode" id="cb28"><pre class="sourceCode bash"><code class="sourceCode bash"><span id="cb28-1"><a href="#cb28-1" tabindex="-1"></a><span class="bu">export</span> <span class="va">SNOWFLAKE_ACCOUNT</span><span class="op">=</span><span class="st">&quot;xy12345.us-east-1&quot;</span></span>
+<span id="cb28-2"><a href="#cb28-2" tabindex="-1"></a><span class="bu">export</span> <span class="va">SNOWFLAKE_USER</span><span class="op">=</span><span class="st">&quot;SVC_USER&quot;</span></span>
+<span id="cb28-3"><a href="#cb28-3" tabindex="-1"></a><span class="bu">export</span> <span class="va">RETICULATE_PYTHON</span><span class="op">=</span><span class="st">&quot;/usr/bin/python3&quot;</span></span></code></pre></div>
 <ol start="4" style="list-style-type: decimal">
 <li>Or use a <code>connections.toml</code> mounted into the
 container.</li>
@@ -728,7 +787,7 @@ management</td>
 </tbody>
 </table>
 <p>Install all optional dependencies at once:</p>
-<div class="sourceCode" id="cb27"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb27-1"><a href="#cb27-1" tabindex="-1"></a>pak<span class="sc">::</span><span class="fu">pak</span>(<span class="st">&quot;Snowflake-Labs/snowflakeR&quot;</span>, <span class="at">dependencies =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
+<div class="sourceCode" id="cb29"><pre class="sourceCode r"><code class="sourceCode r"><span id="cb29-1"><a href="#cb29-1" tabindex="-1"></a>pak<span class="sc">::</span><span class="fu">pak</span>(<span class="st">&quot;Snowflake-Labs/snowflakeR&quot;</span>, <span class="at">dependencies =</span> <span class="cn">TRUE</span>)</span></code></pre></div>
 </div>
 <div id="troubleshooting" class="section level2">
 <h2>8. Troubleshooting</h2>
