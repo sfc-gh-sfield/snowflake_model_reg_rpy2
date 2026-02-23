@@ -80,9 +80,9 @@ from scala_helpers import inject_session_credentials
 session = get_active_session()
 inject_session_credentials(session)
 
-# Create PAT if needed (reuses PATManager from R integration)
-# from r_helpers import PATManager
-# PATManager(session).create_pat(days_to_expiry=1)
+# Create PAT for Scala/Snowpark authentication
+from pat_manager import PATManager
+PATManager(session).create_pat(days_to_expiry=1, force_recreate=True)
 ```
 
 ```python
@@ -90,13 +90,13 @@ inject_session_credentials(session)
 import com.snowflake.snowpark._
 
 val sf = Session.builder.configs(Map(
-  "URL"           -> sys.env("SNOWFLAKE_URL"),
-  "USER"          -> sys.env("SNOWFLAKE_USER"),
-  "ROLE"          -> sys.env("SNOWFLAKE_ROLE"),
-  "DB"            -> sys.env("SNOWFLAKE_DATABASE"),
-  "SCHEMA"        -> sys.env("SNOWFLAKE_SCHEMA"),
-  "WAREHOUSE"     -> sys.env("SNOWFLAKE_WAREHOUSE"),
-  "TOKEN"         -> sys.env("SNOWFLAKE_PAT"),
+  "URL"           -> sys.props("SNOWFLAKE_URL"),
+  "USER"          -> sys.props("SNOWFLAKE_USER"),
+  "ROLE"          -> sys.props("SNOWFLAKE_ROLE"),
+  "DB"            -> sys.props("SNOWFLAKE_DATABASE"),
+  "SCHEMA"        -> sys.props("SNOWFLAKE_SCHEMA"),
+  "WAREHOUSE"     -> sys.props("SNOWFLAKE_WAREHOUSE"),
+  "TOKEN"         -> sys.props("SNOWFLAKE_PAT"),
   "AUTHENTICATOR" -> "oauth"
 )).create
 

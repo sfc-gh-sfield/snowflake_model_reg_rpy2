@@ -31,7 +31,7 @@ After setup with Snowpark session:
     # %%scala
     # import com.snowflake.snowpark._
     # val sf = Session.builder.configs(Map(
-    #   "URL" -> sys.env("SNOWFLAKE_URL"), ...
+    #   "URL" -> sys.props("SNOWFLAKE_URL"), ...
     # )).create
     # sf.sql("SELECT CURRENT_USER()").show()
 """
@@ -496,14 +496,20 @@ def _register_scala_magic() -> None:
 
 def inject_session_credentials(session) -> Dict[str, str]:
     """
-    Extract credentials from a Python Snowpark session and set them as
-    environment variables so Scala code can read them via sys.env(...).
+    Extract credentials from a Python Snowpark session and make them
+    available to Scala code via Java System properties.
+
+    Java's System.getenv() caches the process environment at JVM
+    startup, so os.environ changes made after jpype.startJVM() are
+    invisible to Scala's sys.env(). We therefore also set Java System
+    properties via System.setProperty(), which Scala reads as
+    sys.props("key").
 
     Args:
-        session: Active Snowpark Python session (from get_active_session())
+        session: Active Snowpark Python session
 
     Returns:
-        Dict of environment variable names to values that were set
+        Dict of credential names to values that were set
     """
     creds = {}
 
@@ -517,28 +523,60 @@ def inject_session_credentials(session) -> Dict[str, str]:
             return ""
 
     creds["SNOWFLAKE_ACCOUNT"] = _safe_get(
-        lambda: session.sql("SELECT CURRENT_ACCOUNT()").collect()[0][0]
+        lambda: session.sql(
+            "SELECT CURRENT_ACCOUNT()"
+        ).collect()[0][0]
     )
     creds["SNOWFLAKE_USER"] = _safe_get(
-        lambda: session.sql("SELECT CURRENT_USER()").collect()[0][0]
+        lambda: session.sql(
+            "SELECT CURRENT_USER()"
+        ).collect()[0][0]
     )
-    creds["SNOWFLAKE_ROLE"] = _safe_get(session.get_current_role)
-    creds["SNOWFLAKE_DATABASE"] = _safe_get(session.get_current_database)
-    creds["SNOWFLAKE_SCHEMA"] = _safe_get(session.get_current_schema)
-    creds["SNOWFLAKE_WAREHOUSE"] = _safe_get(session.get_current_warehouse)
+    creds["SNOWFLAKE_ROLE"] = _safe_get(
+        session.get_current_role
+    )
+    creds["SNOWFLAKE_DATABASE"] = _safe_get(
+        session.get_current_database
+    )
+    creds["SNOWFLAKE_SCHEMA"] = _safe_get(
+        session.get_current_schema
+    )
+    creds["SNOWFLAKE_WAREHOUSE"] = _safe_get(
+        session.get_current_warehouse
+    )
 
-    # Build the URL that Snowpark Scala expects
     account = creds["SNOWFLAKE_ACCOUNT"]
     if account:
         host = os.environ.get("SNOWFLAKE_HOST", "")
         if host:
             creds["SNOWFLAKE_URL"] = f"https://{host}"
         else:
-            creds["SNOWFLAKE_URL"] = f"https://{account}.snowflakecomputing.com"
+            creds["SNOWFLAKE_URL"] = (
+                f"https://{account}.snowflakecomputing.com"
+            )
 
+    # Also pick up PAT if already set in the Python environment
+    pat = os.environ.get("SNOWFLAKE_PAT", "")
+    if pat:
+        creds["SNOWFLAKE_PAT"] = pat
+
+    # Set in Python os.environ (for Python-side reads)
     for key, val in creds.items():
         if val:
             os.environ[key] = val
+
+    # Set as Java System properties so Scala can read them
+    # via sys.props("SNOWFLAKE_URL") etc., bypassing the
+    # cached System.getenv() map.
+    try:
+        import jpype
+        if jpype.isJVMStarted():
+            System = jpype.JClass("java.lang.System")
+            for key, val in creds.items():
+                if val:
+                    System.setProperty(key, val)
+    except Exception:
+        pass
 
     return creds
 
@@ -546,42 +584,56 @@ def inject_session_credentials(session) -> Dict[str, str]:
 def create_snowpark_scala_session_code(use_pat: bool = True) -> str:
     """
     Generate Scala code to create a Snowpark session using credentials
-    from environment variables.
+    from Java System properties (set by inject_session_credentials).
+
+    We use sys.props instead of sys.env because Java's System.getenv()
+    caches the environment at JVM startup, making later os.environ
+    changes from Python invisible to Scala.
 
     Args:
-        use_pat: Use PAT authentication (default). Otherwise uses AUTHENTICATOR=oauth.
+        use_pat: Use PAT authentication (default).
 
     Returns:
         Scala code string ready for %%scala execution
     """
     if use_pat:
-        auth_lines = """\
-  "TOKEN"         -> sys.env("SNOWFLAKE_PAT"),
-  "AUTHENTICATOR" -> "oauth\""""
+        auth_lines = (
+            '  "TOKEN"         -> sys.props("SNOWFLAKE_PAT"),\n'
+            '  "AUTHENTICATOR" -> "oauth"'
+        )
     else:
-        auth_lines = """\
-  "TOKEN"         -> sys.env.getOrElse("SNOWFLAKE_PAT", ""),
-  "AUTHENTICATOR" -> sys.env.getOrElse("SNOWFLAKE_AUTH_TYPE", "oauth")"""
+        auth_lines = (
+            '  "TOKEN"         -> sys.props'
+            '.getOrElse("SNOWFLAKE_PAT", ""),\n'
+            '  "AUTHENTICATOR" -> sys.props'
+            '.getOrElse("SNOWFLAKE_AUTH_TYPE", "oauth")'
+        )
 
-    return f"""\
-import com.snowflake.snowpark._
-import com.snowflake.snowpark.functions._
-
-val session = Session.builder.configs(Map(
-  "URL"       -> sys.env("SNOWFLAKE_URL"),
-  "USER"      -> sys.env("SNOWFLAKE_USER"),
-  "ROLE"      -> sys.env("SNOWFLAKE_ROLE"),
-  "DB"        -> sys.env("SNOWFLAKE_DATABASE"),
-  "SCHEMA"    -> sys.env("SNOWFLAKE_SCHEMA"),
-  "WAREHOUSE" -> sys.env("SNOWFLAKE_WAREHOUSE"),
-  {auth_lines}
-)).create
-
-println("Snowpark Scala session created")
-println(s"  User:      ${{session.sql("SELECT CURRENT_USER()").collect()(0).getString(0)}}")
-println(s"  Role:      ${{session.sql("SELECT CURRENT_ROLE()").collect()(0).getString(0)}}")
-println(s"  Database:  ${{session.sql("SELECT CURRENT_DATABASE()").collect()(0).getString(0)}}")
-"""
+    return (
+        "import com.snowflake.snowpark._\n"
+        "import com.snowflake.snowpark.functions._\n"
+        "\n"
+        "val sfSession = Session.builder.configs(Map(\n"
+        '  "URL"       -> sys.props("SNOWFLAKE_URL"),\n'
+        '  "USER"      -> sys.props("SNOWFLAKE_USER"),\n'
+        '  "ROLE"      -> sys.props("SNOWFLAKE_ROLE"),\n'
+        '  "DB"        -> sys.props("SNOWFLAKE_DATABASE"),\n'
+        '  "SCHEMA"    -> sys.props("SNOWFLAKE_SCHEMA"),\n'
+        '  "WAREHOUSE" -> sys.props("SNOWFLAKE_WAREHOUSE"),\n'
+        f"  {auth_lines}\n"
+        ")).create\n"
+        "\n"
+        'println("Snowpark Scala session created")\n'
+        "println(s\"  User:      ${sfSession.sql("
+        '"SELECT CURRENT_USER()").collect()(0)'
+        '.getString(0)}")\n'
+        "println(s\"  Role:      ${sfSession.sql("
+        '"SELECT CURRENT_ROLE()").collect()(0)'
+        '.getString(0)}")\n'
+        "println(s\"  Database:  ${sfSession.sql("
+        '"SELECT CURRENT_DATABASE()").collect()(0)'
+        '.getString(0)}")\n'
+    )
 
 
 # =============================================================================
@@ -807,7 +859,7 @@ def bootstrap_snowpark_scala(session) -> Tuple[bool, str]:
     if not os.environ.get("SNOWFLAKE_PAT"):
         return False, (
             "SNOWFLAKE_PAT not set. Create a PAT first:\n"
-            "  from r_helpers import PATManager\n"
+            "  from pat_manager import PATManager\n"
             "  pat_mgr = PATManager(session)\n"
             "  pat_mgr.create_pat()"
         )
