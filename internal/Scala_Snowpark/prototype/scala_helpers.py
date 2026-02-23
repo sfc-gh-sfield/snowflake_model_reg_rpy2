@@ -630,18 +630,18 @@ def create_snowpark_scala_session_code(use_pat: bool = True) -> str:
         ")).create\n"
         "\n"
         'println("Snowpark Scala session created")\n'
-        "println(s\"  User:      "
-        "${sfSession.sql("
-        '"SELECT CURRENT_USER()").collect()(0)'
-        '.getString(0)}")\n'
-        "println(s\"  Role:      "
-        "${sfSession.sql("
-        '"SELECT CURRENT_ROLE()").collect()(0)'
-        '.getString(0)}")\n'
-        "println(s\"  Database:  "
-        "${sfSession.sql("
-        '"SELECT CURRENT_DATABASE()").collect()(0)'
-        '.getString(0)}")\n'
+        "val _user = sfSession.sql("
+        '"SELECT CURRENT_USER()")'
+        ".collect()(0).getString(0)\n"
+        "val _role = sfSession.sql("
+        '"SELECT CURRENT_ROLE()")'
+        ".collect()(0).getString(0)\n"
+        "val _db = sfSession.sql("
+        '"SELECT CURRENT_DATABASE()")'
+        ".collect()(0).getString(0)\n"
+        'println(s"  User:      ${_user}")\n'
+        'println(s"  Role:      ${_role}")\n'
+        'println(s"  Database:  ${_db}")\n'
     )
 
 
