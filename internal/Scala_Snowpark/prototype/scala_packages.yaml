@@ -47,13 +47,23 @@ snowpark_version: "1.18.0"
 ammonite_version: "3.0.8"
 
 # ====================================================================
+# JVM HEAP
+# ====================================================================
+# Controls the maximum heap size (-Xmx) for the JVM.
+#   "auto"  — detect container memory and use ~25% (clamped 1-4 GB)
+#   "2g"    — fixed 2 GB heap
+#   "1536m" — fixed 1536 MB heap
+# The JVM shares the process with Python, so ~25% is a good default.
+
+jvm_heap: "auto"
+
+# ====================================================================
 # JVM OPTIONS
 # ====================================================================
-# Passed to jpype.startJVM(). Controls heap size, GC, etc.
-# Keep heap modest since we share the process with Python.
+# Additional options passed to jpype.startJVM().
+# -Xmx is handled by jvm_heap above; do NOT add it here as well.
 
 jvm_options:
-  - "-Xmx1g"
   - "-Xms256m"
   - "--add-opens=java.base/java.nio=ALL-UNNAMED"
 
@@ -64,7 +74,8 @@ jvm_options:
 # These are fetched at install time (not runtime).
 # Format: "<groupId>:<artifactId>:<version>"
 
-extra_dependencies:
-  - "org.slf4j:slf4j-nop:1.7.36"
+extra_dependencies: []
+  # Note: Snowpark 1.18.0 already includes slf4j-simple:2.0.16
+  # as a transitive dependency, so no SLF4J binding is needed here.
   # - "org.apache.spark:spark-sql_2.12:3.5.0"
   # - "com.google.guava:guava:33.0.0-jre"

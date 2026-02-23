@@ -30,7 +30,6 @@ prototype/
 ├── scala_packages.yaml                    # Version configuration
 ├── setup_scala_environment.sh             # Installation script
 ├── scala_helpers.py                       # Python helper module
-├── pat_manager.py                         # PAT management (external use)
 └── workspace_scala_quickstart.ipynb       # Example notebook
 ```
 
@@ -49,14 +48,14 @@ directory (alongside your `.ipynb` file).
 !bash setup_scala_environment.sh
 ```
 
-This installs (~2-4 minutes first time, seconds on subsequent runs):
+This installs (~30s, or ~2-4 minutes on first cold start):
 - **micromamba** (if not already present from R setup)
-- **OpenJDK 17** via micromamba
+- **OpenJDK 17** via micromamba (~174MB, largest single download)
 - **coursier** (JVM dependency resolver)
 - **Scala 2.12** compiler JARs via coursier
 - **Ammonite** REPL JARs via coursier
 - **Snowpark 1.18.0** + all transitive dependencies via coursier
-- **slf4j-nop** (suppresses SLF4J binding warnings)
+  (includes `slf4j-simple` for logging)
 - **JPype1** into the kernel's Python venv
 
 ### 3. Initialize and use %%scala
@@ -170,14 +169,17 @@ because Java's `System.getenv()` caches the process environment at JVM
 startup, making `os.environ` changes invisible to Scala after
 `jpype.startJVM()`. Scala reads them via `System.getProperty(key)`.
 
+This is actually **simpler than the R integration** — no PAT creation
+step needed. The container's token is auto-detected and injected.
+
 ### Outside Workspace (e.g. local Jupyter)
 
-For external use, create a PAT and set it in the environment:
+For external use, set a PAT in the environment before calling
+`inject_session_credentials()`:
 
 ```python
-from pat_manager import PATManager
-pat_mgr = PATManager(session)
-pat_mgr.create_pat()
+import os
+os.environ["SNOWFLAKE_PAT"] = "<your-pat-token>"
 ```
 
 `inject_session_credentials()` falls back to `os.environ["SNOWFLAKE_PAT"]`
@@ -210,13 +212,28 @@ java_version: "17"            # OpenJDK version (11 or 17)
 scala_version: "2.12"         # Must match Snowpark artifact suffix
 snowpark_version: "1.18.0"    # Snowpark Scala version
 ammonite_version: "3.0.8"     # Ammonite REPL version
+
+jvm_heap: "auto"              # "auto" = 25% of RAM (1-4GB), or e.g. "2g"
 jvm_options:
-  - "-Xmx1g"                  # JVM heap (shared with Python process)
   - "-Xms256m"
   - "--add-opens=java.base/java.nio=ALL-UNNAMED"   # Required for Arrow/Java 17
-extra_dependencies:
-  - "org.slf4j:slf4j-nop:1.7.36"   # Suppress SLF4J binding warning
+
+extra_dependencies: []
 ```
+
+### JVM Heap Sizing
+
+The `jvm_heap` setting controls the maximum JVM heap (`-Xmx`):
+
+| Value | Behaviour |
+|-------|-----------|
+| `"auto"` (default) | Detect container memory via `/proc/meminfo`, allocate ~25% (clamped 1-4 GB) |
+| `"2g"` | Fixed 2 GB heap |
+| `"1536m"` | Fixed 1536 MB heap |
+
+The JVM shares the process with Python, the Scala compiler, and Snowpark,
+so 25% is a reasonable default. On your container with ~140 GB disk / large
+memory, `auto` will likely select 4 GB (the configured cap).
 
 ---
 
@@ -236,6 +253,23 @@ Ammonite's interactive features like dynamic dependency resolution.
 
 ---
 
+## Licensing
+
+All components are open-source with permissive or standard licenses:
+
+| Component | License | Notes |
+|-----------|---------|-------|
+| micromamba | BSD-3-Clause | Permissive |
+| OpenJDK 17 | GPL v2 + Classpath Exception | Classpath Exception allows unrestricted use |
+| JPype1 | Apache 2.0 | Permissive |
+| coursier | Apache 2.0 | Permissive, build-time only |
+| Scala | Apache 2.0 | Permissive |
+| Ammonite | MIT | Permissive |
+| Snowpark Scala | Apache 2.0 | Snowflake's open-source SDK |
+| SLF4J | MIT | Included transitively via Snowpark |
+
+---
+
 ## Key Learnings
 
 Issues discovered and resolved during prototype development:
@@ -245,7 +279,7 @@ Issues discovered and resolved during prototype development:
 | `System.getenv()` invisible to Scala | Java caches env vars at JVM startup | Use `System.setProperty()` for credentials instead of `os.environ` |
 | PAT rejected inside Workspace | SPCS containers require OAuth only | Auto-detect `/snowflake/session/token` and use `oauth` authenticator |
 | `MemoryUtil` init failure (Arrow) | Java 17 module system blocks reflective access | Add `--add-opens=java.base/java.nio=ALL-UNNAMED` to JVM options |
-| SLF4J binding warning | No SLF4J implementation on classpath | Add `slf4j-nop:1.7.36` to `extra_dependencies` |
+| SLF4J binding warning | SLF4J 2.x backward-compat message | Snowpark includes `slf4j-simple:2.0.16`; warning is cosmetic |
 | `TEMPORARY TABLE` invisible to Scala | Temp tables are session-scoped | Use `TRANSIENT TABLE` for cross-session sharing |
 | `import jpype.imports` needed | JPype's Java import hooks not auto-registered | Call `import jpype.imports` immediately after `jpype.startJVM()` |
 | Ammonite snapshot version 404 | Pre-release versions are not on Maven Central | Use stable release `3.0.8` |
@@ -276,12 +310,11 @@ Issues discovered and resolved during prototype development:
 | `Metadata file not found` | Setup script not run | Run `!bash setup_scala_environment.sh` |
 | `Failed to start JVM` | JAVA_HOME wrong or JDK not installed | Check `java -version` works |
 | `No Scala interpreter initialized` | `setup_scala_environment()` not called | Call it before using `%%scala` |
-| `OutOfMemoryError` | JVM heap too small | Increase `-Xmx` in `scala_packages.yaml` |
+| `OutOfMemoryError` | JVM heap too small | Set `jvm_heap: "4g"` in `scala_packages.yaml`, restart container |
 | `class not found: snowpark` | Snowpark JAR not on classpath | Re-run setup script with `--force` |
-| `Failed to initialize MemoryUtil` | Missing `--add-opens` JVM flag | Add flag to `scala_packages.yaml`, restart container |
-| `Invalid OAuth access token` | SPCS token expired or PAT used in Workspace | Restart container (refreshes token) |
+| `Failed to initialize MemoryUtil` | Missing `--add-opens` JVM flag | Add flag to `jvm_options`, restart container |
+| `Invalid OAuth access token` | SPCS token expired | Restart container (refreshes token) |
 | `NullPointerException` on session | Credentials not set as System properties | Run `inject_session_credentials(session)` before Scala session |
-| `SLF4J: Failed to load class` | No SLF4J binding on classpath | Add `slf4j-nop` to `extra_dependencies`, re-run setup |
 | `Object 'X' does not exist` | Temp table from different session | Use `TRANSIENT TABLE` instead of `TEMPORARY TABLE` |
 
 ---

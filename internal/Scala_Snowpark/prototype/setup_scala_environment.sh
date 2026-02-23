@@ -244,7 +244,10 @@ print(f'SCALA_VERSION="{config.get("scala_version", "2.12")}"')
 print(f'SNOWPARK_VERSION="{config.get("snowpark_version", "1.18.0")}"')
 print(f'AMMONITE_VERSION="{config.get("ammonite_version", "3.0.8")}"')
 
-jvm_opts = config.get("jvm_options", ["-Xmx1g"]) or ["-Xmx1g"]
+jvm_heap = config.get("jvm_heap", "auto")
+print(f'JVM_HEAP="{jvm_heap}"')
+
+jvm_opts = config.get("jvm_options", []) or []
 print(f'JVM_OPTIONS="{" ".join(jvm_opts)}"')
 
 extra = config.get("extra_dependencies", []) or []
@@ -256,6 +259,7 @@ PYEOF
     log_info "  Scala version:    ${SCALA_VERSION}"
     log_info "  Snowpark version: ${SNOWPARK_VERSION}"
     log_info "  Ammonite version: ${AMMONITE_VERSION}"
+    log_info "  JVM heap:         ${JVM_HEAP}"
     log_info "  JVM options:      ${JVM_OPTIONS}"
     [ -n "${EXTRA_DEPS}" ] && log_info "  Extra deps:       ${EXTRA_DEPS}"
     echo ""
@@ -493,6 +497,7 @@ metadata = {
     "scala_classpath_file": "${SCALA_CP_FILE}",
     "ammonite_classpath_file": "${AMMONITE_CP_FILE}",
     "extra_classpath_file": "${EXTRA_CP_FILE}",
+    "jvm_heap": "${JVM_HEAP}",
     "jvm_options": "${JVM_OPTIONS}".split(),
 }
 

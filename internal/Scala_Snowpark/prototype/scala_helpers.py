@@ -173,10 +173,8 @@ def setup_scala_environment(
     if not jpype.isJVMStarted():
         try:
             classpath = _build_classpath(metadata, include_ammonite=prefer_ammonite)
-            jvm_options = metadata.get("jvm_options", [
-                "-Xmx1g",
-                "--add-opens=java.base/java.nio=ALL-UNNAMED",
-            ])
+            jvm_options = _resolve_jvm_options(metadata)
+            result["jvm_options"] = jvm_options
 
             jpype.startJVM(
                 jpype.getDefaultJVMPath(),
@@ -233,6 +231,71 @@ def setup_scala_environment(
 
     result["success"] = len(result["errors"]) == 0
     return result
+
+
+# =============================================================================
+# JVM Heap Sizing
+# =============================================================================
+
+def _detect_total_memory_mb() -> Optional[int]:
+    """Read total physical memory from /proc/meminfo (Linux only)."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) // 1024  # kB -> MB
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _compute_heap_size(
+    fraction: float = 0.25,
+    min_mb: int = 1024,
+    max_mb: int = 4096,
+) -> str:
+    """
+    Compute a JVM -Xmx heap size as a fraction of total system RAM.
+
+    The JVM shares the process with Python + Scala compiler +
+    Snowpark, so we default to 25% of total memory, clamped
+    between 1GB and 4GB.
+
+    Returns:
+        Heap string like "2g" or "1536m"
+    """
+    total = _detect_total_memory_mb()
+    if total is None:
+        return f"{min_mb}m"
+
+    heap_mb = int(total * fraction)
+    heap_mb = max(min_mb, min(heap_mb, max_mb))
+
+    if heap_mb >= 1024 and heap_mb % 1024 == 0:
+        return f"{heap_mb // 1024}g"
+    return f"{heap_mb}m"
+
+
+def _resolve_jvm_options(metadata: Dict[str, Any]) -> List[str]:
+    """
+    Build the final JVM option list from metadata, resolving any
+    'auto' heap sizing.
+    """
+    opts = metadata.get("jvm_options", [
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    ])
+
+    heap_setting = metadata.get("jvm_heap", "auto")
+
+    has_xmx = any(o.startswith("-Xmx") for o in opts)
+
+    if heap_setting == "auto" and not has_xmx:
+        heap = _compute_heap_size()
+        opts = [f"-Xmx{heap}"] + opts
+    elif heap_setting != "auto" and not has_xmx:
+        opts = [f"-Xmx{heap_setting}"] + opts
+
+    return opts
 
 
 # =============================================================================
@@ -994,11 +1057,9 @@ def bootstrap_snowpark_scala(session) -> Tuple[bool, str]:
     if not creds.get("SNOWFLAKE_TOKEN"):
         return False, (
             "No auth token available. Inside a Workspace the "
-            "SPCS token should be auto-detected. For external "
-            "use, create a PAT first:\n"
-            "  from pat_manager import PATManager\n"
-            "  pat_mgr = PATManager(session)\n"
-            "  pat_mgr.create_pat()"
+            "SPCS token at /snowflake/session/token should be "
+            "auto-detected. For external use, set "
+            "os.environ['SNOWFLAKE_PAT'] before calling this."
         )
 
     code = create_snowpark_scala_session_code()
