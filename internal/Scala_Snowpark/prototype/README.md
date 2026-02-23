@@ -55,7 +55,7 @@ This installs (~30s, or ~2-4 minutes on first cold start):
 - **Scala 2.12** compiler JARs via coursier
 - **Ammonite** REPL JARs via coursier
 - **Snowpark 1.18.0** + all transitive dependencies via coursier
-  (includes `slf4j-simple` for logging)
+- **slf4j-nop** (silences SLF4J 1.x binding warning from Ammonite)
 - **JPype1** into the kernel's Python venv
 
 ### 3. Initialize and use %%scala
@@ -147,8 +147,13 @@ print(f"total from Scala: {total}")
 The `%scala` line magic executes a single Scala expression:
 
 ```python
-%scala println(s"2 + 2 = ${2 + 2}")
+%scala println("2 + 2 = " + (2 + 2))
 ```
+
+**Caveat:** IPython expands `${expr}` in line magic arguments *before*
+Scala sees them (e.g. `${2 + 2}` becomes `$4`). Use `$varName` (no braces)
+or string concatenation for `%scala`. For `s"${...}"` interpolation, use
+`%%scala` cells which pass the body through unmodified.
 
 ---
 
@@ -218,7 +223,8 @@ jvm_options:
   - "-Xms256m"
   - "--add-opens=java.base/java.nio=ALL-UNNAMED"   # Required for Arrow/Java 17
 
-extra_dependencies: []
+extra_dependencies:
+  - "org.slf4j:slf4j-nop:1.7.36"   # Silences SLF4J 1.x StaticLoggerBinder warning
 ```
 
 ### JVM Heap Sizing
@@ -279,7 +285,7 @@ Issues discovered and resolved during prototype development:
 | `System.getenv()` invisible to Scala | Java caches env vars at JVM startup | Use `System.setProperty()` for credentials instead of `os.environ` |
 | PAT rejected inside Workspace | SPCS containers require OAuth only | Auto-detect `/snowflake/session/token` and use `oauth` authenticator |
 | `MemoryUtil` init failure (Arrow) | Java 17 module system blocks reflective access | Add `--add-opens=java.base/java.nio=ALL-UNNAMED` to JVM options |
-| SLF4J binding warning | SLF4J 2.x backward-compat message | Snowpark includes `slf4j-simple:2.0.16`; warning is cosmetic |
+| SLF4J binding warning | Ammonite brings SLF4J 1.x API; Snowpark's 2.x binding doesn't satisfy 1.x lookup | Add `slf4j-nop:1.7.36` to `extra_dependencies` |
 | `TEMPORARY TABLE` invisible to Scala | Temp tables are session-scoped | Use `TRANSIENT TABLE` for cross-session sharing |
 | `import jpype.imports` needed | JPype's Java import hooks not auto-registered | Call `import jpype.imports` immediately after `jpype.startJVM()` |
 | Ammonite snapshot version 404 | Pre-release versions are not on Maven Central | Use stable release `3.0.8` |
@@ -300,6 +306,7 @@ Issues discovered and resolved during prototype development:
 | Ephemeral install | Reinstall on container restart | Use `PERSISTENT_DIR` |
 | Ammonite API undocumented | "ammonite-lite" mode as workaround | Investigate Ammonite `Main` API |
 | Separate Snowflake sessions | Python and Scala sessions are independent | Use transient tables for sharing |
+| `%scala` can't use `s"${...}"` | IPython expands `${expr}` before Scala sees it | Use `%%scala` cells for string interpolation |
 
 ---
 

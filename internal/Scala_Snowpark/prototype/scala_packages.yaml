@@ -74,8 +74,11 @@ jvm_options:
 # These are fetched at install time (not runtime).
 # Format: "<groupId>:<artifactId>:<version>"
 
-extra_dependencies: []
-  # Note: Snowpark 1.18.0 already includes slf4j-simple:2.0.16
-  # as a transitive dependency, so no SLF4J binding is needed here.
+extra_dependencies:
+  # Ammonite brings an older SLF4J 1.x API that looks for
+  # StaticLoggerBinder. Snowpark's slf4j-simple:2.0.16 uses
+  # the 2.x ServiceLoader mechanism and doesn't satisfy the
+  # 1.x lookup. This NOP binding silences the warning.
+  - "org.slf4j:slf4j-nop:1.7.36"
   # - "org.apache.spark:spark-sql_2.12:3.5.0"
   # - "com.google.guava:guava:33.0.0-jre"
