@@ -230,6 +230,42 @@ sfr_undeploy_model(reg, "MTCARS_MPG", "V2", "mpg_service")
 sfr_delete_model(reg, "MTCARS_MPG")
 ```
 
+## Container package versions (important)
+
+When `sfr_deploy_model()` or `create_service()` builds the SPCS container
+image, it resolves conda/pip package versions at build time. R model
+containers include `r-base` and `rpy2`, which can affect which versions of
+numpy, pandas, and Python itself get installed.
+
+**Key points:**
+
+- Without a `numpy<2.0` pin, the conda solver picks **Python 3.12** +
+  **numpy 2.x** for R model containers. Pure Python models get
+  **Python 3.11** + numpy 2.x (which works fine).
+- Under Python 3.12 + numpy 2.x the SPCS inference server's JSON
+  deserialisation produces a `numpy.recarray` instead of a
+  `pandas.DataFrame`. This causes an HTTP 500 crash:
+  `recarray has no attribute fillna`.
+- Pinning `numpy<2.0` also causes the solver to select **Python 3.11**
+  (the same version used by pure-Python containers), which completely
+  avoids the bug. Our testing confirmed: Python 3.11.14 + numpy 1.26.4.
+- `snowflakeR` includes `numpy<2.0` in the default `conda_deps`. If you
+  override `conda_deps`, **make sure to include `numpy<2.0`**.
+
+```r
+# Default (safe) -- numpy<2.0 is pinned automatically:
+mv <- sfr_log_model(conn, model, model_name = "MY_MODEL",
+                    input_cols = list(x = "double"),
+                    output_cols = list(prediction = "double"))
+
+# Custom conda deps -- remember to include the numpy pin:
+mv <- sfr_log_model(conn, model, model_name = "MY_MODEL",
+                    input_cols = list(x = "double"),
+                    output_cols = list(prediction = "double"),
+                    conda_deps = c("r-base>=4.1", "rpy2>=3.5",
+                                   "numpy<2.0", "r-forecast"))
+```
+
 ## Supported model types
 
 Any R model that can be serialised with `saveRDS()` works, including:

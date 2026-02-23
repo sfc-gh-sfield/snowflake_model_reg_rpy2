@@ -122,7 +122,19 @@ resolve_registry_context <- function(reg) {
 #'   Valid types: `"integer"`, `"double"`, `"string"`, `"boolean"`.
 #' @param output_cols Named list mapping output column names to types.
 #' @param conda_deps Character vector. Conda packages for the model
-#'   environment. Defaults include `r-base` and `rpy2`.
+#'   environment. Defaults include `r-base>=4.1`, `rpy2>=3.5`, and
+#'   `numpy<2.0`.
+#'
+#'   **Package version warning:** The SPCS inference container resolves
+#'   package versions at image build time. Without `numpy<2.0`, adding
+#'   `r-base` and `rpy2` causes the conda solver to pick Python 3.12 +
+#'   numpy 2.x. Under numpy 2.x the inference server's JSON
+#'   deserialisation produces a `numpy.recarray` instead of a
+#'   `pandas.DataFrame`, causing a server-side crash (`recarray has no
+#'   attribute fillna`). Pinning `numpy<2.0` also causes the solver to
+#'   select Python 3.11 (the same version used by pure-Python model
+#'   containers), which completely avoids the bug.
+#'   If you override `conda_deps`, ensure you include `numpy<2.0`.
 #' @param pip_requirements Character vector. Additional pip packages.
 #' @param target_platforms Character. One of `"SNOWPARK_CONTAINER_SERVICES"`,
 #'   `"WAREHOUSE"`, or both. Default: `"SNOWPARK_CONTAINER_SERVICES"`.

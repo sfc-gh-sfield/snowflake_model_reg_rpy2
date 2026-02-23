@@ -103,6 +103,24 @@
     return(df)
   }
 
+  # Format: {"data": [[idx, {col: val}], [idx, {col: val}], ...]}
+  # This is the standard SPCS inference response format.
+  if (!is.null(body$data) && is.list(body$data) && length(body$data) > 0) {
+    rows <- lapply(body$data, function(row) {
+      # Each row is [index, {col1: val1, col2: val2, ...}]
+      if (is.list(row) && length(row) >= 2 && is.list(row[[2]])) {
+        row[[2]]
+      } else if (is.list(row) && !is.null(names(row))) {
+        row
+      } else {
+        row
+      }
+    })
+    df <- do.call(rbind, lapply(rows, as.data.frame, stringsAsFactors = FALSE))
+    names(df) <- tolower(names(df))
+    return(df)
+  }
+
   cli::cli_abort(c(
     "x" = "Unexpected response format from SPCS endpoint.",
     "i" = "Keys: {.val {paste(names(body), collapse = ', ')}}"

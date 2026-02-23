@@ -117,14 +117,17 @@ def _build_wrapper_class(
 
             import rpy2.robjects as ro
             from rpy2.robjects import pandas2ri
-            from rpy2.robjects import numpy2ri
             from rpy2.robjects.conversion import localconverter
 
-            combined = (
-                ro.default_converter
-                + pandas2ri.converter
-                + numpy2ri.converter
-            )
+            # NOTE: We deliberately do NOT include numpy2ri.converter.
+            # Importing / activating numpy2ri installs global hooks that
+            # cause numpy's structured-array code to return recarrays
+            # instead of plain ndarrays.  The SPCS inference server then
+            # crashes at line 581 with "recarray has no attribute fillna"
+            # because inference_df is a numpy.recarray rather than a
+            # pandas.DataFrame.  pandas2ri alone is sufficient for
+            # DataFrame <-> R data.frame conversion.
+            combined = ro.default_converter + pandas2ri.converter
 
             with localconverter(combined):
                 for pkg in packages_to_load:
@@ -143,15 +146,11 @@ def _build_wrapper_class(
 
             import rpy2.robjects as ro
             from rpy2.robjects import pandas2ri
-            from rpy2.robjects import numpy2ri
             from rpy2.robjects.conversion import localconverter
             from rpy2.rinterface_lib.embedded import RRuntimeError
 
-            combined = (
-                ro.default_converter
-                + pandas2ri.converter
-                + numpy2ri.converter
-            )
+            # pandas2ri only -- see note in _ensure_initialized
+            combined = ro.default_converter + pandas2ri.converter
             uid = uuid.uuid4().hex[:8]
 
             try:
@@ -174,6 +173,10 @@ def _build_wrapper_class(
                         ro.globalenv[f"result_{uid}"]
                     )
                     ro.r(f'rm(list = ls(pattern = "_{uid}$"))')
+
+                # Ensure we always return a proper pandas DataFrame
+                if not isinstance(result_df, pd.DataFrame):
+                    result_df = pd.DataFrame(result_df)
 
                 return result_df
 
@@ -355,7 +358,18 @@ def registry_log_model(
     if target_platforms is None:
         target_platforms = ["SNOWPARK_CONTAINER_SERVICES"]
     if conda_dependencies is None:
-        conda_dependencies = ["r-base>=4.1", "rpy2>=3.5"]
+        # NOTE: The primary fix for the SPCS "recarray has no attribute
+        # fillna" bug is removing numpy2ri from the rpy2 converter chain
+        # (see _build_wrapper_class above).  We keep numpy<2.0 as a
+        # belt-and-suspenders measure: it forces the conda solver to
+        # pick Python 3.11 (matching pure-Python model containers)
+        # rather than 3.12, which provides a known-good environment.
+        # See: internal/ml_registry_issue/SPCS_INFERENCE_RECARRAY_BUG.md
+        conda_dependencies = [
+            "r-base>=4.1",
+            "rpy2>=3.5",
+            "numpy<2.0",
+        ]
 
     has_rpy2 = any("rpy2" in dep for dep in conda_dependencies)
     if not has_rpy2:
@@ -364,6 +378,23 @@ def registry_log_model(
     has_rbase = any("r-base" in dep for dep in conda_dependencies)
     if not has_rbase:
         conda_dependencies.insert(0, "r-base>=4.1")
+
+    # Warn if no numpy pin -- container may resolve to numpy 2.x
+    # which is known to break R model serving
+    has_numpy_pin = any(
+        "numpy" in dep and ("<" in dep or "==" in dep)
+        for dep in conda_dependencies
+    )
+    if not has_numpy_pin:
+        import warnings
+        warnings.warn(
+            "No numpy version pin found in conda_dependencies. "
+            "Without 'numpy<2.0', r-base + rpy2 may resolve to "
+            "Python 3.12 + numpy 2.x which causes a known SPCS "
+            "inference server bug (recarray/fillna). Consider adding "
+            "'numpy<2.0' to conda_dependencies.",
+            stacklevel=2,
+        )
 
     WrapperClass = _build_wrapper_class(
         predict_function=predict_function,
