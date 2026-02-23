@@ -555,10 +555,20 @@ def inject_session_credentials(session) -> Dict[str, str]:
                 f"https://{account}.snowflakecomputing.com"
             )
 
-    # Also pick up PAT if already set in the Python environment
-    pat = os.environ.get("SNOWFLAKE_PAT", "")
-    if pat:
-        creds["SNOWFLAKE_PAT"] = pat
+    # Authentication token: inside SPCS (Workspace Notebooks) we must
+    # use the container's OAuth token; PAT is blocked from inside SPCS.
+    spcs_token_path = "/snowflake/session/token"
+    if os.path.isfile(spcs_token_path):
+        with open(spcs_token_path) as f:
+            creds["SNOWFLAKE_TOKEN"] = f.read().strip()
+        creds["SNOWFLAKE_AUTH_TYPE"] = "oauth"
+    else:
+        pat = os.environ.get("SNOWFLAKE_PAT", "")
+        if pat:
+            creds["SNOWFLAKE_TOKEN"] = pat
+            creds["SNOWFLAKE_AUTH_TYPE"] = (
+                "programmatic_access_token"
+            )
 
     # Set in Python os.environ (for Python-side reads)
     for key, val in creds.items():
@@ -581,24 +591,21 @@ def inject_session_credentials(session) -> Dict[str, str]:
     return creds
 
 
-def create_snowpark_scala_session_code(use_pat: bool = True) -> str:
+def create_snowpark_scala_session_code() -> str:
     """
     Generate Scala code to create a Snowpark session using credentials
     from Java System properties (set by inject_session_credentials).
 
-    We use sys.props instead of sys.env because Java's System.getenv()
-    caches the environment at JVM startup, making later os.environ
-    changes from Python invisible to Scala.
-
-    Args:
-        use_pat: Use PAT authentication (default).
+    Authentication is determined automatically:
+    - Inside SPCS/Workspace: uses the container's OAuth token
+    - External: uses PAT with programmatic_access_token authenticator
 
     Returns:
         Scala code string ready for %%scala execution
     """
     auth_config = (
-        '  "TOKEN"         -> prop("SNOWFLAKE_PAT"),\n'
-        '  "AUTHENTICATOR" -> "programmatic_access_token"'
+        '  "TOKEN"         -> prop("SNOWFLAKE_TOKEN"),\n'
+        '  "AUTHENTICATOR" -> prop("SNOWFLAKE_AUTH_TYPE")'
     )
 
     return (
@@ -781,7 +788,8 @@ def _check_snowflake_env() -> Dict[str, Any]:
     required = ["SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER"]
     optional = [
         "SNOWFLAKE_URL", "SNOWFLAKE_ROLE", "SNOWFLAKE_DATABASE",
-        "SNOWFLAKE_SCHEMA", "SNOWFLAKE_WAREHOUSE", "SNOWFLAKE_PAT",
+        "SNOWFLAKE_SCHEMA", "SNOWFLAKE_WAREHOUSE",
+        "SNOWFLAKE_TOKEN", "SNOWFLAKE_AUTH_TYPE",
     ]
     missing = []
     for var in required:
@@ -858,16 +866,17 @@ def bootstrap_snowpark_scala(session) -> Tuple[bool, str]:
     if not creds.get("SNOWFLAKE_ACCOUNT"):
         return False, "Failed to extract account from session"
 
-    # Check for PAT
-    if not os.environ.get("SNOWFLAKE_PAT"):
+    if not creds.get("SNOWFLAKE_TOKEN"):
         return False, (
-            "SNOWFLAKE_PAT not set. Create a PAT first:\n"
+            "No auth token available. Inside a Workspace the "
+            "SPCS token should be auto-detected. For external "
+            "use, create a PAT first:\n"
             "  from pat_manager import PATManager\n"
             "  pat_mgr = PATManager(session)\n"
             "  pat_mgr.create_pat()"
         )
 
-    code = create_snowpark_scala_session_code(use_pat=True)
+    code = create_snowpark_scala_session_code()
     success, output, errors = execute_scala(code)
 
     if success:

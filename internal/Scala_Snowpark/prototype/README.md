@@ -80,9 +80,9 @@ from scala_helpers import inject_session_credentials
 session = get_active_session()
 inject_session_credentials(session)
 
-# Create PAT for Scala/Snowpark authentication
-from pat_manager import PATManager
-PATManager(session).create_pat(days_to_expiry=1, force_recreate=True)
+# Inject credentials (auto-detects SPCS token in Workspace)
+from scala_helpers import inject_session_credentials
+inject_session_credentials(session)
 ```
 
 ```python
@@ -96,8 +96,8 @@ val sf = Session.builder.configs(Map(
   "DB"            -> sys.props("SNOWFLAKE_DATABASE"),
   "SCHEMA"        -> sys.props("SNOWFLAKE_SCHEMA"),
   "WAREHOUSE"     -> sys.props("SNOWFLAKE_WAREHOUSE"),
-  "TOKEN"         -> sys.props("SNOWFLAKE_PAT"),
-  "AUTHENTICATOR" -> "programmatic_access_token"
+  "TOKEN"         -> sys.props("SNOWFLAKE_TOKEN"),
+  "AUTHENTICATOR" -> sys.props("SNOWFLAKE_AUTH_TYPE")
 )).create
 
 sf.sql("SELECT CURRENT_USER(), CURRENT_ROLE()").show()
