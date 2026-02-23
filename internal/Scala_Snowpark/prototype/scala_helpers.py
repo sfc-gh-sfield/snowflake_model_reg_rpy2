@@ -259,10 +259,8 @@ def _build_classpath(
     if include_ammonite:
         cp.extend(_read_classpath_file(metadata.get("ammonite_classpath_file", "")))
 
-    # Snowpark uber-JAR
-    snowpark_jar = metadata.get("snowpark_jar", "")
-    if snowpark_jar and os.path.isfile(snowpark_jar):
-        cp.append(snowpark_jar)
+    # Snowpark and its transitive dependencies
+    cp.extend(_read_classpath_file(metadata.get("snowpark_classpath_file", "")))
 
     # Extra dependencies
     cp.extend(_read_classpath_file(metadata.get("extra_classpath_file", "")))
@@ -408,8 +406,8 @@ def _init_ammonite(metadata: Dict[str, Any]) -> None:
         _init_imain(metadata)
         _scala_state["interpreter_type"] = "ammonite-lite"
 
-        snowpark_jar = metadata.get("snowpark_jar", "")
-        if snowpark_jar and os.path.isfile(snowpark_jar):
+        snowpark_cp = metadata.get("snowpark_classpath_file", "")
+        if snowpark_cp and os.path.isfile(snowpark_cp):
             _execute_scala_imain(
                 "import com.snowflake.snowpark._\n"
                 "import com.snowflake.snowpark.functions._"
@@ -707,11 +705,16 @@ def _check_snowpark() -> Dict[str, Any]:
     result = {"ok": False, "details": {}, "errors": []}
     meta = _scala_state.get("metadata")
     if meta:
-        jar = meta.get("snowpark_jar", "")
-        result["details"]["jar_path"] = jar
-        result["details"]["jar_exists"] = os.path.isfile(jar)
+        cp_file = meta.get("snowpark_classpath_file", "")
+        result["details"]["classpath_file"] = cp_file
+        result["details"]["classpath_exists"] = os.path.isfile(cp_file)
         result["details"]["version"] = meta.get("snowpark_version", "unknown")
-        result["ok"] = os.path.isfile(jar)
+        if cp_file and os.path.isfile(cp_file):
+            jars = _read_classpath_file(cp_file)
+            result["details"]["jar_count"] = len(jars)
+            result["ok"] = len(jars) > 0
+        else:
+            result["errors"].append(f"Classpath file not found: {cp_file}")
     else:
         result["errors"].append("No metadata loaded")
     return result

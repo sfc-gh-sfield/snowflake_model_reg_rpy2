@@ -26,10 +26,11 @@ scala_version: "2.12"
 # ====================================================================
 # SNOWPARK VERSION
 # ====================================================================
-# The Snowpark uber-JAR (snowpark-<version>-bundle.jar) is downloaded
-# from Maven Central. This single JAR includes all dependencies.
+# Snowpark JARs are resolved via coursier (transitive deps included).
+# Since 1.17.0 the Maven artifact includes the Scala suffix:
+#   com.snowflake:snowpark_2.12:<version>
 #
-# Check latest: https://central.sonatype.com/artifact/com.snowflake/snowpark
+# Check latest: https://repo1.maven.org/maven2/com/snowflake/snowpark_2.12/
 
 snowpark_version: "1.18.0"
 

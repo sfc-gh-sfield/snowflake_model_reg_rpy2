@@ -353,39 +353,31 @@ PYEOF
     cs --version 2>/dev/null && log_info "  coursier OK" || log_warn "  coursier version check failed (may still work)"
 
     # =========================================================================
-    # Step 5: Create JAR directory and download Snowpark
+    # Step 5: Create JAR directory and resolve Snowpark JARs via Coursier
     # =========================================================================
 
     echo ""
-    log_info "Step 5: Downloading Snowpark JAR..."
+    log_info "Step 5: Resolving Snowpark JARs..."
 
     mkdir -p "${JAR_DIR}"
 
-    # Determine Scala suffix for the Snowpark artifact
-    # Snowpark artifact: snowpark_2.12 or snowpark (uber-jar)
-    SNOWPARK_JAR="${JAR_DIR}/snowpark-${SNOWPARK_VERSION}-bundle.jar"
+    SNOWPARK_CP_FILE="${JAR_DIR}/snowpark_classpath.txt"
+    SNOWPARK_ARTIFACT="com.snowflake:snowpark_${SCALA_VERSION}:${SNOWPARK_VERSION}"
 
-    if [ "${FORCE_REINSTALL}" = false ] && [ -f "${SNOWPARK_JAR}" ]; then
-        log_info "  [OK] Snowpark JAR already downloaded (skipping)"
+    if [ "${FORCE_REINSTALL}" = false ] && [ -f "${SNOWPARK_CP_FILE}" ]; then
+        log_info "  [OK] Snowpark classpath already resolved (skipping)"
     else
-        SNOWPARK_URL="https://repo1.maven.org/maven2/com/snowflake/snowpark/${SNOWPARK_VERSION}/snowpark-${SNOWPARK_VERSION}-bundle.jar"
-        log_info "  Downloading from Maven Central..."
-        log_debug "  URL: ${SNOWPARK_URL}"
-
+        log_info "  Resolving ${SNOWPARK_ARTIFACT} and transitive dependencies..."
         retry_command \
-            "curl -fL -o '${SNOWPARK_JAR}' '${SNOWPARK_URL}'" \
-            "Download Snowpark JAR"
+            "cs fetch '${SNOWPARK_ARTIFACT}' --classpath > '${SNOWPARK_CP_FILE}'" \
+            "Resolve Snowpark JARs"
 
-        if [ -f "${SNOWPARK_JAR}" ]; then
-            local_size=$(stat -c%s "${SNOWPARK_JAR}" 2>/dev/null || stat -f%z "${SNOWPARK_JAR}" 2>/dev/null || echo "unknown")
-            log_info "  Snowpark JAR downloaded: ${local_size} bytes"
+        if [ -f "${SNOWPARK_CP_FILE}" ]; then
+            local jar_count
+            jar_count=$(tr ':' '\n' < "${SNOWPARK_CP_FILE}" | wc -l | tr -d ' ')
+            log_info "  Snowpark resolved: ${jar_count} JARs on classpath"
         else
-            log_warn "  Bundle JAR not found at Maven Central, trying with-dependencies variant..."
-            SNOWPARK_JAR="${JAR_DIR}/snowpark-${SNOWPARK_VERSION}.jar"
-            SNOWPARK_URL="https://repo1.maven.org/maven2/com/snowflake/snowpark/${SNOWPARK_VERSION}/snowpark-${SNOWPARK_VERSION}.jar"
-            retry_command \
-                "curl -fL -o '${SNOWPARK_JAR}' '${SNOWPARK_URL}'" \
-                "Download Snowpark JAR (alternative)"
+            log_error "  Failed to resolve Snowpark classpath"
         fi
     fi
 
@@ -495,7 +487,7 @@ metadata = {
     "scala_version": "${SCALA_VERSION}",
     "scala_full_version": "${SCALA_FULL_VERSION}",
     "snowpark_version": "${SNOWPARK_VERSION}",
-    "snowpark_jar": "${SNOWPARK_JAR}",
+    "snowpark_classpath_file": "${SNOWPARK_CP_FILE}",
     "ammonite_version": "${AMMONITE_VERSION}",
     "jar_dir": "${JAR_DIR}",
     "scala_classpath_file": "${SCALA_CP_FILE}",
@@ -547,7 +539,7 @@ PYEOF
     log_info "  Prefix:           ${ENV_PREFIX}"
     log_info "  JAVA_HOME:        ${JAVA_HOME}"
     log_info "  JAR directory:    ${JAR_DIR}"
-    log_info "  Snowpark JAR:     ${SNOWPARK_JAR}"
+    log_info "  Snowpark CP:      ${SNOWPARK_CP_FILE}"
     log_info "  Metadata:         ${METADATA_FILE}"
 
     if [ "${ENABLE_LOGGING}" = true ]; then
