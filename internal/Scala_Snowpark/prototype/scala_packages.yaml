@@ -55,6 +55,7 @@ ammonite_version: "3.0.8"
 jvm_options:
   - "-Xmx1g"
   - "-Xms256m"
+  - "--add-opens=java.base/java.nio=ALL-UNNAMED"
 
 # ====================================================================
 # ADDITIONAL MAVEN DEPENDENCIES

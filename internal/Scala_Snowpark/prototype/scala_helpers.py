@@ -165,7 +165,10 @@ def setup_scala_environment(
     if not jpype.isJVMStarted():
         try:
             classpath = _build_classpath(metadata, include_ammonite=prefer_ammonite)
-            jvm_options = metadata.get("jvm_options", ["-Xmx1g"])
+            jvm_options = metadata.get("jvm_options", [
+                "-Xmx1g",
+                "--add-opens=java.base/java.nio=ALL-UNNAMED",
+            ])
 
             jpype.startJVM(
                 jpype.getDefaultJVMPath(),
