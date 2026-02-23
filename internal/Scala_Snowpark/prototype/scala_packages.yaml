@@ -1,0 +1,66 @@
+# Scala / JVM Package Configuration for Snowflake Workspace Notebooks
+# ====================================================================
+#
+# This file defines the JDK, Scala, and Snowpark versions to install.
+# Edit this file to customize your Scala environment.
+#
+# ====================================================================
+# JDK VERSION
+# ====================================================================
+# Snowpark Scala requires Java 11 or 17.
+# OpenJDK is installed via micromamba from conda-forge.
+
+java_version: "17"
+
+# ====================================================================
+# SCALA VERSION
+# ====================================================================
+# Snowpark Scala supports:
+#   - Scala 2.12 (primary, fully supported)
+#   - Scala 2.13 (public preview as of Snowpark 1.17.0+)
+#
+# The version here must match the Snowpark artifact suffix.
+
+scala_version: "2.12"
+
+# ====================================================================
+# SNOWPARK VERSION
+# ====================================================================
+# The Snowpark uber-JAR (snowpark-<version>-bundle.jar) is downloaded
+# from Maven Central. This single JAR includes all dependencies.
+#
+# Check latest: https://central.sonatype.com/artifact/com.snowflake/snowpark
+
+snowpark_version: "1.18.0"
+
+# ====================================================================
+# AMMONITE VERSION
+# ====================================================================
+# Ammonite is the REPL engine (same as used by the Almond Jupyter
+# kernel that Snowflake's docs recommend). Resolved via coursier.
+#
+# The version must be compatible with the Scala version above.
+# Format: <ammonite_version> (coursier resolves the Scala-specific artifact)
+
+ammonite_version: "3.0.0-M2-15-9bed9700"
+
+# ====================================================================
+# JVM OPTIONS
+# ====================================================================
+# Passed to jpype.startJVM(). Controls heap size, GC, etc.
+# Keep heap modest since we share the process with Python.
+
+jvm_options:
+  - "-Xmx1g"
+  - "-Xms256m"
+
+# ====================================================================
+# ADDITIONAL MAVEN DEPENDENCIES
+# ====================================================================
+# Extra JARs to resolve via coursier and add to the classpath.
+# These are fetched at install time (not runtime).
+# Format: "<groupId>:<artifactId>:<version>"
+
+extra_dependencies: []
+  # - "org.apache.spark:spark-sql_2.12:3.5.0"
+  # - "com.google.guava:guava:33.0.0-jre"
