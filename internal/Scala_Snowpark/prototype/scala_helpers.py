@@ -597,40 +597,49 @@ def create_snowpark_scala_session_code(use_pat: bool = True) -> str:
         Scala code string ready for %%scala execution
     """
     if use_pat:
-        auth_lines = (
-            '  "TOKEN"         -> sys.props("SNOWFLAKE_PAT"),\n'
+        auth_config = (
+            '  "TOKEN"         -> prop("SNOWFLAKE_PAT"),\n'
             '  "AUTHENTICATOR" -> "oauth"'
         )
     else:
-        auth_lines = (
-            '  "TOKEN"         -> sys.props'
-            '.getOrElse("SNOWFLAKE_PAT", ""),\n'
-            '  "AUTHENTICATOR" -> sys.props'
-            '.getOrElse("SNOWFLAKE_AUTH_TYPE", "oauth")'
+        auth_config = (
+            '  "TOKEN"         -> prop("SNOWFLAKE_PAT"),\n'
+            '  "AUTHENTICATOR" -> "oauth"'
         )
 
     return (
         "import com.snowflake.snowpark._\n"
         "import com.snowflake.snowpark.functions._\n"
         "\n"
+        "def prop(k: String): String = {\n"
+        "  val v = System.getProperty(k)\n"
+        "  require(v != null, "
+        's"Java System property \'$k\' not set. '
+        "Run inject_session_credentials(session) first.\")\n"
+        "  v\n"
+        "}\n"
+        "\n"
         "val sfSession = Session.builder.configs(Map(\n"
-        '  "URL"       -> sys.props("SNOWFLAKE_URL"),\n'
-        '  "USER"      -> sys.props("SNOWFLAKE_USER"),\n'
-        '  "ROLE"      -> sys.props("SNOWFLAKE_ROLE"),\n'
-        '  "DB"        -> sys.props("SNOWFLAKE_DATABASE"),\n'
-        '  "SCHEMA"    -> sys.props("SNOWFLAKE_SCHEMA"),\n'
-        '  "WAREHOUSE" -> sys.props("SNOWFLAKE_WAREHOUSE"),\n'
-        f"  {auth_lines}\n"
+        '  "URL"       -> prop("SNOWFLAKE_URL"),\n'
+        '  "USER"      -> prop("SNOWFLAKE_USER"),\n'
+        '  "ROLE"      -> prop("SNOWFLAKE_ROLE"),\n'
+        '  "DB"        -> prop("SNOWFLAKE_DATABASE"),\n'
+        '  "SCHEMA"    -> prop("SNOWFLAKE_SCHEMA"),\n'
+        '  "WAREHOUSE" -> prop("SNOWFLAKE_WAREHOUSE"),\n'
+        f"  {auth_config}\n"
         ")).create\n"
         "\n"
         'println("Snowpark Scala session created")\n'
-        "println(s\"  User:      ${sfSession.sql("
+        "println(s\"  User:      "
+        "${sfSession.sql("
         '"SELECT CURRENT_USER()").collect()(0)'
         '.getString(0)}")\n'
-        "println(s\"  Role:      ${sfSession.sql("
+        "println(s\"  Role:      "
+        "${sfSession.sql("
         '"SELECT CURRENT_ROLE()").collect()(0)'
         '.getString(0)}")\n'
-        "println(s\"  Database:  ${sfSession.sql("
+        "println(s\"  Database:  "
+        "${sfSession.sql("
         '"SELECT CURRENT_DATABASE()").collect()(0)'
         '.getString(0)}")\n'
     )

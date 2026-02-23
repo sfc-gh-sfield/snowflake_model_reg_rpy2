@@ -123,6 +123,17 @@ class PATManager:
 
             os.environ["SNOWFLAKE_PAT"] = self._token_secret
 
+            # Also set as Java System property so Scala can
+            # read it via sys.props (JVM caches env at startup)
+            try:
+                import jpype
+                if jpype.isJVMStarted():
+                    jpype.JClass("java.lang.System").setProperty(
+                        "SNOWFLAKE_PAT", self._token_secret
+                    )
+            except Exception:
+                pass
+
             result["success"] = True
             result["expires_at"] = self._expires_at.isoformat()
 
