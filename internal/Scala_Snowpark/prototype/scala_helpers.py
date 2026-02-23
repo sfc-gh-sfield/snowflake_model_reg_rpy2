@@ -4,8 +4,9 @@ Scala Environment Helpers for Snowflake Workspace Notebooks
 This module provides:
 - JVM startup via JPype (in-process, shared memory)
 - Scala REPL initialization (IMain or Ammonite)
-- %%scala IPython magic for Scala cell execution
-- Snowpark session credential injection
+- %%scala cell magic and %scala line magic for Scala execution
+- -i / -o flags for Python <-> Scala variable transfer
+- Snowpark session credential injection (SPCS OAuth + PAT fallback)
 - Environment diagnostics
 
 Architecture:
@@ -24,6 +25,13 @@ Usage:
     # val x = 42
     # println(s"The answer is $x")
 
+    # Single-line:
+    # %scala println("Hello!")
+
+    # With variable transfer (like rpy2's %%R -i / -o):
+    # %%scala -i count -o total
+    # val total = (1 to count.asInstanceOf[Int]).sum
+
 After setup with Snowpark session:
     from scala_helpers import inject_session_credentials
     inject_session_credentials(session)
@@ -31,7 +39,7 @@ After setup with Snowpark session:
     # %%scala
     # import com.snowflake.snowpark._
     # val sf = Session.builder.configs(Map(
-    #   "URL" -> sys.props("SNOWFLAKE_URL"), ...
+    #   "URL" -> System.getProperty("SNOWFLAKE_URL"), ...
     # )).create
     # sf.sql("SELECT CURRENT_USER()").show()
 """
@@ -449,14 +457,91 @@ def execute_scala(code: str) -> Tuple[bool, str, str]:
 # %%scala IPython Magic
 # =============================================================================
 
+def _parse_magic_args(line: str) -> Dict[str, Any]:
+    """
+    Parse flags from the ``%%scala`` / ``%scala`` magic line.
+
+    Supported flags (modelled on rpy2's ``%%R``):
+        -i var1,var2    Push Python variables into Scala before execution
+        -o var1,var2    Pull Scala variables back into Python after execution
+        --silent        Suppress REPL variable-binding echo
+        --time          Print wall-clock execution time
+
+    Returns:
+        Dict with keys: inputs, outputs, silent, show_time
+    """
+    import shlex
+
+    args: Dict[str, Any] = {
+        "inputs": [],
+        "outputs": [],
+        "silent": False,
+        "show_time": False,
+    }
+
+    try:
+        tokens = shlex.split(line)
+    except ValueError:
+        tokens = line.split()
+
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        if tok == "-i" and i + 1 < len(tokens):
+            args["inputs"].extend(
+                v.strip() for v in tokens[i + 1].split(",") if v.strip()
+            )
+            i += 2
+        elif tok == "-o" and i + 1 < len(tokens):
+            args["outputs"].extend(
+                v.strip() for v in tokens[i + 1].split(",") if v.strip()
+            )
+            i += 2
+        elif tok == "--silent":
+            args["silent"] = True
+            i += 1
+        elif tok == "--time":
+            args["show_time"] = True
+            i += 1
+        else:
+            i += 1
+
+    return args
+
+
+def _push_inputs(names: List[str]) -> None:
+    """Push Python variables into the Scala interpreter by name."""
+    ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
+    for name in names:
+        if name not in ip.user_ns:
+            print(
+                f"Warning: Python variable '{name}' not found, skipping",
+                file=sys.stderr,
+            )
+            continue
+        push_to_scala(name, ip.user_ns[name])
+
+
+def _pull_outputs(names: List[str]) -> None:
+    """Pull Scala variables back into the Python namespace."""
+    ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
+    for name in names:
+        val = pull_from_scala(name)
+        if val is None:
+            print(f"Warning: Scala variable '{name}' not found, skipping",
+                  file=sys.stderr)
+        else:
+            ip.user_ns[name] = val
+
+
 def _register_scala_magic() -> None:
-    """Register the %%scala cell magic with IPython."""
+    """Register the ``%%scala`` cell magic and ``%scala`` line magic."""
     try:
         get_ipython()  # type: ignore[name-defined]  # noqa: F841
     except NameError:
         raise RuntimeError("Not in an IPython environment")
 
-    from IPython.core.magic import register_cell_magic
+    from IPython.core.magic import register_cell_magic, register_line_magic
 
     @register_cell_magic
     def scala(line, cell):
@@ -469,26 +554,63 @@ def _register_scala_magic() -> None:
             println(s"The answer is $x")
 
         Flags (on the %%scala line):
-            --silent    Suppress REPL variable-binding output
-            --time      Print execution time
+            -i var1,var2   Push Python variables into Scala before execution
+            -o var1,var2   Pull Scala variables into Python after execution
+            --silent       Suppress REPL variable-binding output
+            --time         Print execution time
+
+        Examples:
+            %%scala -i df_name -o result --time
+            val total = df_name.toInt + 10
+            val result = total * 2
+            println(s"result = $result")
         """
         import time
 
-        show_time = "--time" in line
-        silent = "--silent" in line
+        args = _parse_magic_args(line)
+
+        if args["inputs"]:
+            _push_inputs(args["inputs"])
 
         t0 = time.time()
         success, output, errors = execute_scala(cell)
         elapsed = time.time() - t0
 
-        if output and not silent:
+        if output and not args["silent"]:
             print(output)
         if errors:
             print(errors, file=sys.stderr)
         if not success and not errors:
-            print("Scala execution failed (no error details captured)", file=sys.stderr)
-        if show_time:
+            print("Scala execution failed (no error details captured)",
+                  file=sys.stderr)
+
+        if success and args["outputs"]:
+            _pull_outputs(args["outputs"])
+
+        if args["show_time"]:
             print(f"\n[Scala cell executed in {elapsed:.2f}s]")
+
+    @register_line_magic
+    def scala(line):  # noqa: F811 — intentional re-use of name for %scala
+        """
+        Execute a single line of Scala code.
+
+        Usage:
+            %scala println("Hello from Scala!")
+            %scala val x = 42
+        """
+        if not line.strip():
+            print("Usage: %scala <scala expression>", file=sys.stderr)
+            return
+
+        success, output, errors = execute_scala(line)
+        if output:
+            print(output)
+        if errors:
+            print(errors, file=sys.stderr)
+        if not success and not errors:
+            print("Scala execution failed (no error details captured)",
+                  file=sys.stderr)
 
     _scala_state["magic_registered"] = True
 
