@@ -41,9 +41,10 @@ snowpark_version: "1.18.0"
 # kernel that Snowflake's docs recommend). Resolved via coursier.
 #
 # The version must be compatible with the Scala version above.
-# Format: <ammonite_version> (coursier resolves the Scala-specific artifact)
+# Ammonite is published per Scala patch version (e.g. ammonite_2.12.20).
+# Check available: https://repo1.maven.org/maven2/com/lihaoyi/
 
-ammonite_version: "3.0.0-M2-15-9bed9700"
+ammonite_version: "3.0.8"
 
 # ====================================================================
 # JVM OPTIONS

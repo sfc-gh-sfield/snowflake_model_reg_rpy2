@@ -48,7 +48,7 @@ MIN_DISK_SPACE_MB=1500
 JAVA_VERSION="17"
 SCALA_VERSION="2.12"
 SNOWPARK_VERSION="1.18.0"
-AMMONITE_VERSION="3.0.0-M2-15-9bed9700"
+AMMONITE_VERSION="3.0.8"
 JVM_OPTIONS=""
 EXTRA_DEPS=""
 
@@ -185,7 +185,7 @@ The package configuration file (scala_packages.yaml) supports:
   java_version: "17"
   scala_version: "2.12"
   snowpark_version: "1.18.0"
-  ammonite_version: "3.0.0-M2-15-9bed9700"
+  ammonite_version: "3.0.8"
   jvm_options: ["-Xmx1g"]
   extra_dependencies: ["group:artifact:version"]
 
@@ -242,7 +242,7 @@ with open("${CONFIG_FILE}", 'r') as f:
 print(f'JAVA_VERSION="{config.get("java_version", "17")}"')
 print(f'SCALA_VERSION="{config.get("scala_version", "2.12")}"')
 print(f'SNOWPARK_VERSION="{config.get("snowpark_version", "1.18.0")}"')
-print(f'AMMONITE_VERSION="{config.get("ammonite_version", "3.0.0-M2-15-9bed9700")}"')
+print(f'AMMONITE_VERSION="{config.get("ammonite_version", "3.0.8")}"')
 
 jvm_opts = config.get("jvm_options", ["-Xmx1g"]) or ["-Xmx1g"]
 print(f'JVM_OPTIONS="{" ".join(jvm_opts)}"')
@@ -424,7 +424,7 @@ PYEOF
         log_info "  [OK] Ammonite classpath already resolved (skipping)"
     else
         # Ammonite artifact includes the full Scala version in its name
-        # e.g., com.lihaoyi:ammonite_2.12.20:3.0.0-M2-15-9bed9700
+        # e.g., com.lihaoyi:ammonite_2.12.20:3.0.8
         if [ -n "${SCALA_FULL_VERSION}" ]; then
             AMMONITE_ARTIFACT="com.lihaoyi:ammonite_${SCALA_FULL_VERSION}:${AMMONITE_VERSION}"
         else

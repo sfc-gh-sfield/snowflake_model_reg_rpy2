@@ -113,7 +113,7 @@ Edit `scala_packages.yaml` to change versions:
 java_version: "17"            # OpenJDK version
 scala_version: "2.12"         # Must match Snowpark artifact
 snowpark_version: "1.18.0"    # Snowpark Scala version
-ammonite_version: "3.0.0-M2-15-9bed9700"
+ammonite_version: "3.0.8"
 jvm_options:
   - "-Xmx1g"                  # JVM heap (shared with Python process)
 ```
