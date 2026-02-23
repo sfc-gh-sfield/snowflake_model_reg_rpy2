@@ -128,6 +128,10 @@ The `%%scala` cell magic supports flags modelled on rpy2's `%%R`:
 | `--silent` | Suppress REPL variable-binding echo | `%%scala --silent` |
 | `--time` | Print wall-clock execution time | `%%scala --time` |
 
+Snowpark DataFrames passed via `-i` / `-o` are **auto-detected** and
+transferred via their SQL query plan (no data materialisation). See
+[Snowpark DataFrame Interop](#snowpark-dataframe-interop-sql-plan-transfer).
+
 Flags can be combined:
 
 ```python
@@ -192,7 +196,60 @@ when the SPCS token file is not present.
 
 ---
 
-## Cross-language Data Sharing
+## Snowpark DataFrame Interop (SQL Plan Transfer)
+
+When `-i` or `-o` reference a **Snowpark DataFrame**, the magic auto-detects
+it and transfers the underlying **SQL query plan** instead of materialising
+data through temp tables.
+
+| Direction | Mechanism | API |
+|-----------|-----------|-----|
+| Python → Scala (`-i`) | `df.queries['queries'][-1]` → `sfSession.sql(sql)` | Documented Python property |
+| Scala → Python (`-o`) | `df.queries.last` → `session.sql(sql)` | Scala API (view fallback) |
+
+No data is copied — only the SQL string crosses the JPype bridge.
+
+### Example
+
+```python
+# Python: create a Snowpark DataFrame
+py_df = session.table("customers")
+```
+
+```python
+%%scala -i py_df -o high_value
+// py_df is now a Scala Snowpark DataFrame (same SQL plan)
+val high_value = py_df.filter(col("SPEND") > 1000)
+high_value.show()
+```
+
+```python
+# high_value is now a Snowpark Python DataFrame
+high_value.to_pandas()
+```
+
+### How it works
+
+1. **Python → Scala:** `_push_snowpark_df()` extracts the last SQL from
+   `df.queries['queries']` and passes it through a Java System property
+   (avoiding all string-escaping issues). Scala receives it via
+   `sfSession.sql(System.getProperty(...))`.
+
+2. **Scala → Python:** `_pull_snowpark_df()` tries the Scala
+   `DataFrame.queries` API first. If that isn't available, it falls back to
+   `createOrReplaceView()` (non-temporary, tracked for cleanup via
+   `cleanup_interop_views()`).
+
+3. **Cleanup:** If the view fallback was used, call
+   `cleanup_interop_views()` at the end of the notebook to drop any
+   interop views.
+
+---
+
+## Cross-language Data Sharing (Tables)
+
+For cases where SQL plan transfer isn't suitable (e.g. materialised results,
+ad-hoc exploration), you can use tables directly.
 
 The Python and Scala Snowpark sessions are **separate Snowflake connections**.
 This has important implications:
@@ -305,7 +362,7 @@ Issues discovered and resolved during prototype development:
 | Output formatting | Raw text, no rich display | Build `sprint()` helpers like R |
 | Ephemeral install | Reinstall on container restart | Use `PERSISTENT_DIR` |
 | Ammonite API undocumented | "ammonite-lite" mode as workaround | Investigate Ammonite `Main` API |
-| Separate Snowflake sessions | Python and Scala sessions are independent | Use transient tables for sharing |
+| Separate Snowflake sessions | Python and Scala sessions are independent | SQL plan transfer via `-i`/`-o`, or transient tables |
 | `%scala` can't use `s"${...}"` | IPython expands `${expr}` before Scala sees it | Use `%%scala` cells for string interpolation |
 
 ---

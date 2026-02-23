@@ -6,6 +6,7 @@ This module provides:
 - Scala REPL initialization (IMain or Ammonite)
 - %%scala cell magic and %scala line magic for Scala execution
 - -i / -o flags for Python <-> Scala variable transfer
+- Automatic Snowpark DataFrame interop via SQL plan transfer
 - Snowpark session credential injection (SPCS OAuth + PAT fallback)
 - Environment diagnostics
 
@@ -31,6 +32,12 @@ Usage:
     # With variable transfer (like rpy2's %%R -i / -o):
     # %%scala -i count -o total
     # val total = (1 to count.asInstanceOf[Int]).sum
+
+    # Snowpark DataFrame interop (auto-detected):
+    # py_df = session.table("my_table")   # Python Snowpark DF
+    # %%scala -i py_df -o result_df
+    # val result_df = py_df.filter(col("id") > 10)
+    # # result_df is now a Snowpark Python DataFrame in the notebook
 
 After setup with Snowpark session:
     from scala_helpers import inject_session_credentials
@@ -573,7 +580,11 @@ def _parse_magic_args(line: str) -> Dict[str, Any]:
 
 
 def _push_inputs(names: List[str]) -> None:
-    """Push Python variables into the Scala interpreter by name."""
+    """Push Python variables into the Scala interpreter by name.
+
+    Snowpark Python DataFrames are detected automatically and transferred
+    via their SQL query plan (no data materialisation).
+    """
     ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
     for name in names:
         if name not in ip.user_ns:
@@ -582,13 +593,28 @@ def _push_inputs(names: List[str]) -> None:
                 file=sys.stderr,
             )
             continue
-        push_to_scala(name, ip.user_ns[name])
+
+        value = ip.user_ns[name]
+        if _is_snowpark_python_df(value):
+            _push_snowpark_df(name, value)
+        else:
+            push_to_scala(name, value)
 
 
 def _pull_outputs(names: List[str]) -> None:
-    """Pull Scala variables back into the Python namespace."""
+    """Pull Scala variables back into the Python namespace.
+
+    If a Scala variable is a Snowpark DataFrame, it is transferred via
+    its SQL query plan and materialised as a Snowpark Python DataFrame.
+    """
     ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
     for name in names:
+        if _is_snowpark_scala_df(name):
+            py_df = _pull_snowpark_df(name)
+            if py_df is not None:
+                ip.user_ns[name] = py_df
+                continue
+
         val = pull_from_scala(name)
         if val is None:
             print(f"Warning: Scala variable '{name}' not found, skipping",
@@ -699,6 +725,8 @@ def inject_session_credentials(session) -> Dict[str, str]:
     Returns:
         Dict of credential names to values that were set
     """
+    _scala_state["python_session"] = session
+
     creds = {}
 
     def _safe_get(fn, strip_quotes=True):
@@ -891,6 +919,167 @@ def pull_from_scala(name: str) -> Any:
         return None
     except Exception:
         return None
+
+
+# =============================================================================
+# Snowpark DataFrame Interop: Python <-> Scala via SQL Plan
+# =============================================================================
+#
+# Snowpark DataFrames are lazy SQL query plans — they don't hold data in
+# memory.  This lets us transfer DataFrames between Python and Scala by
+# passing the underlying SQL string instead of materialising data through
+# temp tables.
+#
+#   Python → Scala:  df.queries['queries'][-1]  →  sfSession.sql(sql)
+#   Scala  → Python: df.queries (Scala API)     →  session.sql(sql)
+#
+# When -i / -o flags reference a Snowpark DataFrame, the magic auto-detects
+# it and transfers the SQL plan rather than the raw JVM/Python object.
+
+_interop_views: List[str] = []
+
+
+def _is_snowpark_python_df(obj) -> bool:
+    """Check if *obj* is a Snowpark Python DataFrame."""
+    try:
+        from snowflake.snowpark import DataFrame
+        return isinstance(obj, DataFrame)
+    except ImportError:
+        return False
+
+
+def _push_snowpark_df(name: str, df) -> bool:
+    """
+    Push a Snowpark Python DataFrame into Scala by transferring its SQL
+    query plan.  No data is materialised — only the SQL string crosses
+    the bridge, and Scala creates its own lazy DataFrame from it.
+
+    The SQL is passed through a Java System property to avoid all
+    string-escaping issues.
+    """
+    import jpype
+
+    try:
+        queries = df.queries.get("queries", [])
+        if not queries:
+            print(f"Warning: DataFrame '{name}' has no SQL queries",
+                  file=sys.stderr)
+            return False
+        sql = queries[-1]
+    except (AttributeError, KeyError, IndexError) as e:
+        print(f"Warning: Could not extract SQL plan from '{name}': {e}",
+              file=sys.stderr)
+        return False
+
+    prop_key = f"_interop_sql_{name}"
+    System = jpype.JClass("java.lang.System")
+    System.setProperty(prop_key, sql)
+
+    code = f'val {name} = sfSession.sql(System.getProperty("{prop_key}"))'
+    success, output, errors = execute_scala(code)
+
+    System.clearProperty(prop_key)
+
+    if not success:
+        msg = errors or output
+        print(f"Warning: Failed to create Scala DataFrame '{name}': {msg}",
+              file=sys.stderr)
+    return success
+
+
+def _is_snowpark_scala_df(name: str) -> bool:
+    """Check if a Scala variable is a Snowpark DataFrame."""
+    code = (
+        f"val _isdf_{name}: Boolean = "
+        f"try {{ {name}.isInstanceOf[com.snowflake.snowpark.DataFrame] }} "
+        f"catch {{ case _: Throwable => false }}"
+    )
+    success, _, _ = execute_scala(code)
+    if not success:
+        return False
+    val = pull_from_scala(f"_isdf_{name}")
+    try:
+        return bool(val)
+    except Exception:
+        return False
+
+
+def _pull_snowpark_df(name: str) -> Optional[Any]:
+    """
+    Pull a Snowpark Scala DataFrame into Python by extracting the SQL
+    query plan.
+
+    Strategies (in order of preference):
+      1. Extract SQL via the Scala DataFrame.queries API and transfer
+         through a Java System property.
+      2. Fall back to creating a non-temporary VIEW and reading it from
+         the Python session (the view is tracked for cleanup).
+    """
+    import jpype
+
+    session = _scala_state.get("python_session")
+    if session is None:
+        print(
+            "Warning: No Python Snowpark session stored. "
+            "Call inject_session_credentials(session) first.",
+            file=sys.stderr,
+        )
+        return None
+
+    # Strategy 1 — extract SQL plan via Scala .queries API
+    prop_key = f"_interop_sql_{name}"
+    for extract_expr in [
+        f"{name}.queries.last",
+        f"{name}.queries.apply({name}.queries.length - 1)",
+    ]:
+        code = f'System.setProperty("{prop_key}", {extract_expr})'
+        success, _, _ = execute_scala(code)
+        if success:
+            System = jpype.JClass("java.lang.System")
+            sql = str(System.getProperty(prop_key))
+            System.clearProperty(prop_key)
+            if sql and sql != "null":
+                try:
+                    return session.sql(sql)
+                except Exception:
+                    continue
+
+    # Strategy 2 — view-based fallback
+    view_name = f"_INTEROP_{name.upper()}"
+    code = f'{name}.createOrReplaceView("{view_name}")'
+    success, _, errors = execute_scala(code)
+    if success:
+        _interop_views.append(view_name)
+        return session.table(view_name)
+
+    print(
+        f"Warning: Could not transfer Scala DataFrame '{name}' to Python"
+        + (f": {errors}" if errors else ""),
+        file=sys.stderr,
+    )
+    return None
+
+
+def cleanup_interop_views() -> int:
+    """
+    Drop any non-temporary views created during Scala → Python DataFrame
+    transfers.  Call this at the end of a notebook to tidy up.
+
+    Returns the number of views dropped.
+    """
+    session = _scala_state.get("python_session")
+    if not session:
+        return 0
+
+    dropped = 0
+    for view in _interop_views[:]:
+        try:
+            session.sql(f"DROP VIEW IF EXISTS {view}").collect()
+            _interop_views.remove(view)
+            dropped += 1
+        except Exception:
+            pass
+    return dropped
 
 
 # =============================================================================

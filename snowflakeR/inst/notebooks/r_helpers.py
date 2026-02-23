@@ -164,6 +164,22 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
     return result
 
 
+# TODO: Replace per-function output workarounds (rprint, rview, rcat) with
+# buffered capture at the %%R magic level.  The Scala/JPype prototype captures
+# all JVM output into a ByteArrayOutputStream and emits it as a single
+# print() call — no extra line breaks.  We can do the same for R by
+# installing a custom rpy2 console callback that buffers output:
+#
+#   import rpy2.rinterface_lib.callbacks as cb
+#   _buf = []
+#   def _buffered(s): _buf.append(s)
+#   # before cell: cb.consolewrite_print = _buffered; _buf.clear()
+#   # after cell:  cb.consolewrite_print = old; print("".join(_buf))
+#
+# This would make R's normal print()/cat() work cleanly in Workspace
+# Notebooks without needing wrapper functions.  See the Scala prototype
+# in internal/Scala_Snowpark/prototype/scala_helpers.py for the pattern.
+
 # R output helpers code - can be loaded independently of connection management
 R_OUTPUT_HELPERS_CODE = '''
 # =============================================================================
