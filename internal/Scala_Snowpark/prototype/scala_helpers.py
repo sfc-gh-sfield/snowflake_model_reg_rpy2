@@ -173,6 +173,7 @@ def setup_scala_environment(
                 classpath=classpath,
                 convertStrings=True,
             )
+            import jpype.imports  # noqa: F811 — registers Java import hooks
             _scala_state["jvm_started"] = True
             result["jvm_started"] = True
         except Exception as e:
