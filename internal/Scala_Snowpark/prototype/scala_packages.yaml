@@ -64,6 +64,7 @@ jvm_options:
 # These are fetched at install time (not runtime).
 # Format: "<groupId>:<artifactId>:<version>"
 
-extra_dependencies: []
+extra_dependencies:
+  - "org.slf4j:slf4j-nop:1.7.36"
   # - "org.apache.spark:spark-sql_2.12:3.5.0"
   # - "com.google.guava:guava:33.0.0-jre"
