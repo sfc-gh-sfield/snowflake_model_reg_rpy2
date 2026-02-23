@@ -97,7 +97,7 @@ val sf = Session.builder.configs(Map(
   "SCHEMA"        -> sys.props("SNOWFLAKE_SCHEMA"),
   "WAREHOUSE"     -> sys.props("SNOWFLAKE_WAREHOUSE"),
   "TOKEN"         -> sys.props("SNOWFLAKE_PAT"),
-  "AUTHENTICATOR" -> "oauth"
+  "AUTHENTICATOR" -> "programmatic_access_token"
 )).create
 
 sf.sql("SELECT CURRENT_USER(), CURRENT_ROLE()").show()

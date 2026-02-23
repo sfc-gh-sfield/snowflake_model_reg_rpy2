@@ -596,16 +596,10 @@ def create_snowpark_scala_session_code(use_pat: bool = True) -> str:
     Returns:
         Scala code string ready for %%scala execution
     """
-    if use_pat:
-        auth_config = (
-            '  "TOKEN"         -> prop("SNOWFLAKE_PAT"),\n'
-            '  "AUTHENTICATOR" -> "oauth"'
-        )
-    else:
-        auth_config = (
-            '  "TOKEN"         -> prop("SNOWFLAKE_PAT"),\n'
-            '  "AUTHENTICATOR" -> "oauth"'
-        )
+    auth_config = (
+        '  "TOKEN"         -> prop("SNOWFLAKE_PAT"),\n'
+        '  "AUTHENTICATOR" -> "programmatic_access_token"'
+    )
 
     return (
         "import com.snowflake.snowpark._\n"
