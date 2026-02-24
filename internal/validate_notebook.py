@@ -92,7 +92,8 @@ def _fix_cell(cell: dict) -> int:
     fixes = 0
     ct = cell.get("cell_type", "code")
 
-    if "id" not in cell or not cell["id"]:
+    cid = cell.get("id", "")
+    if not cid or not UUID4_RE.match(str(cid)):
         cell["id"] = str(uuid.uuid4())
         fixes += 1
 
