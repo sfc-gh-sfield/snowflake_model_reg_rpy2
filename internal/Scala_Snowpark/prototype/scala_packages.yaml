@@ -80,5 +80,19 @@ extra_dependencies:
   # the 2.x ServiceLoader mechanism and doesn't satisfy the
   # 1.x lookup. This NOP binding silences the warning.
   - "org.slf4j:slf4j-nop:1.7.36"
-  # - "org.apache.spark:spark-sql_2.12:3.5.0"
-  # - "com.google.guava:guava:33.0.0-jre"
+
+# ====================================================================
+# SNOWPARK CONNECT (opt-in)
+# ====================================================================
+# When enabled, the installer also sets up Snowpark Connect for Scala:
+#   - pip installs snowpark-connect[jdk], pyspark, opentelemetry
+#   - Fetches spark-connect-client-jvm JARs via coursier
+# At runtime, a local Spark Connect gRPC server is started and a Scala
+# SparkSession (`spark`) is bound in %%scala cells alongside sfSession.
+#
+# This adds ~30s to install time and ~200MB of pip packages.
+
+spark_connect:
+  enabled: false
+  pyspark_version: "3.5.6"
+  server_port: 15002

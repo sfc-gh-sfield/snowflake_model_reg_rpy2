@@ -51,6 +51,9 @@ SNOWPARK_VERSION="1.18.0"
 AMMONITE_VERSION="3.0.8"
 JVM_OPTIONS=""
 EXTRA_DEPS=""
+SPARK_CONNECT_ENABLED="false"
+SPARK_CONNECT_PYSPARK_VERSION="3.5.6"
+SPARK_CONNECT_SERVER_PORT="15002"
 
 # =============================================================================
 # Logging Functions
@@ -252,6 +255,11 @@ print(f'JVM_OPTIONS="{" ".join(jvm_opts)}"')
 
 extra = config.get("extra_dependencies", []) or []
 print(f'EXTRA_DEPS="{" ".join(extra)}"')
+
+sc = config.get("spark_connect", {}) or {}
+print(f'SPARK_CONNECT_ENABLED="{str(sc.get("enabled", False)).lower()}"')
+print(f'SPARK_CONNECT_PYSPARK_VERSION="{sc.get("pyspark_version", "3.5.6")}"')
+print(f'SPARK_CONNECT_SERVER_PORT="{sc.get("server_port", 15002)}"')
 PYEOF
 )"
 
@@ -262,6 +270,7 @@ PYEOF
     log_info "  JVM heap:         ${JVM_HEAP}"
     log_info "  JVM options:      ${JVM_OPTIONS}"
     [ -n "${EXTRA_DEPS}" ] && log_info "  Extra deps:       ${EXTRA_DEPS}"
+    log_info "  Spark Connect:    ${SPARK_CONNECT_ENABLED}"
     echo ""
 
     # =========================================================================
@@ -334,27 +343,38 @@ PYEOF
     fi
 
     # =========================================================================
-    # Step 4: Install Coursier
+    # Step 4: Install Coursier (JAR launcher)
     # =========================================================================
+    # Uses the JAR launcher instead of the GraalVM native binary because the
+    # native image crashes in some containers (PhysicalMemory.size failure).
 
     echo ""
-    log_info "Step 4: Installing coursier..."
+    log_info "Step 4: Installing coursier JAR launcher..."
 
-    CS_BIN="${ENV_PREFIX}/bin/cs"
+    CS_JAR="${JAR_DIR}/coursier.jar"
+    mkdir -p "${JAR_DIR}"
 
-    if [ "${FORCE_REINSTALL}" = false ] && [ -x "${CS_BIN}" ]; then
-        log_info "  [OK] coursier already installed (skipping)"
+    if [ "${FORCE_REINSTALL}" = false ] && [ -f "${CS_JAR}" ]; then
+        log_info "  [OK] coursier JAR already downloaded (skipping)"
     else
-        log_info "  Downloading coursier..."
+        log_info "  Downloading coursier JAR launcher..."
         retry_command \
-            "curl -fL 'https://github.com/coursier/launchers/raw/master/cs-x86_64-pc-linux.gz' | gzip -d > '${CS_BIN}'" \
-            "Download coursier"
-        chmod +x "${CS_BIN}"
-        log_info "  coursier installed at ${CS_BIN}"
+            "curl -fL -o '${CS_JAR}' 'https://github.com/coursier/coursier/releases/latest/download/coursier'" \
+            "Download coursier JAR"
+        log_info "  coursier JAR saved to ${CS_JAR}"
     fi
 
+    # Helper function: run coursier via java -jar (strips JAVA_TOOL_OPTIONS)
+    cs_fetch() {
+        env -u JAVA_TOOL_OPTIONS java -jar "${CS_JAR}" fetch "$@"
+    }
+
     # Verify coursier
-    cs --version 2>/dev/null && log_info "  coursier OK" || log_warn "  coursier version check failed (may still work)"
+    if env -u JAVA_TOOL_OPTIONS java -jar "${CS_JAR}" --help > /dev/null 2>&1; then
+        log_info "  coursier OK"
+    else
+        log_warn "  coursier verification failed (may still work)"
+    fi
 
     # =========================================================================
     # Step 5: Create JAR directory and resolve Snowpark JARs via Coursier
@@ -373,7 +393,7 @@ PYEOF
     else
         log_info "  Resolving ${SNOWPARK_ARTIFACT} and transitive dependencies..."
         retry_command \
-            "cs fetch '${SNOWPARK_ARTIFACT}' --classpath > '${SNOWPARK_CP_FILE}'" \
+            "cs_fetch '${SNOWPARK_ARTIFACT}' --classpath > '${SNOWPARK_CP_FILE}'" \
             "Resolve Snowpark JARs"
 
         if [ -f "${SNOWPARK_CP_FILE}" ]; then
@@ -404,7 +424,7 @@ PYEOF
         log_info "  Resolving Scala ${SCALA_VERSION} compiler JARs..."
         # Fetch the latest 2.12.x compiler
         retry_command \
-            "cs fetch org.scala-lang:scala-compiler:${SCALA_VERSION}+ org.scala-lang:scala-reflect:${SCALA_VERSION}+ --classpath 2>/dev/null > '${SCALA_CP_FILE}'" \
+            "cs_fetch org.scala-lang:scala-compiler:${SCALA_VERSION}+ org.scala-lang:scala-reflect:${SCALA_VERSION}+ --classpath 2>/dev/null > '${SCALA_CP_FILE}'" \
             "Resolve Scala compiler"
 
         if [ -f "${SCALA_CP_FILE}" ] && [ -s "${SCALA_CP_FILE}" ]; then
@@ -438,7 +458,7 @@ PYEOF
 
         log_info "  Resolving Ammonite: ${AMMONITE_ARTIFACT}..."
         retry_command \
-            "cs fetch '${AMMONITE_ARTIFACT}' --classpath 2>/dev/null > '${AMMONITE_CP_FILE}'" \
+            "cs_fetch '${AMMONITE_ARTIFACT}' --classpath 2>/dev/null > '${AMMONITE_CP_FILE}'" \
             "Resolve Ammonite JARs"
 
         if [ -f "${AMMONITE_CP_FILE}" ] && [ -s "${AMMONITE_CP_FILE}" ]; then
@@ -460,7 +480,7 @@ PYEOF
         for dep in ${EXTRA_DEPS}; do
             log_info "    Resolving ${dep}..."
             local dep_cp
-            dep_cp=$(cs fetch "${dep}" --classpath 2>/dev/null || echo "")
+            dep_cp=$(cs_fetch "${dep}" --classpath 2>/dev/null || echo "")
             if [ -n "${dep_cp}" ]; then
                 if [ -s "${EXTRA_CP_FILE}" ]; then
                     echo -n ":${dep_cp}" >> "${EXTRA_CP_FILE}"
@@ -499,6 +519,9 @@ metadata = {
     "extra_classpath_file": "${EXTRA_CP_FILE}",
     "jvm_heap": "${JVM_HEAP}",
     "jvm_options": "${JVM_OPTIONS}".split(),
+    "spark_connect_enabled": "${SPARK_CONNECT_ENABLED}" == "true",
+    "spark_connect_classpath_file": "${SPARK_CONNECT_CP_FILE}" or None,
+    "spark_connect_server_port": int("${SPARK_CONNECT_SERVER_PORT}"),
 }
 
 with open("${METADATA_FILE}", "w") as f:
@@ -531,7 +554,56 @@ print(f"  JPype JVM path: {jvm_path}")
 PYEOF
 
     # =========================================================================
-    # Step 9: Summary
+    # Step 9: Spark Connect (conditional)
+    # =========================================================================
+
+    SPARK_CONNECT_CP_FILE=""
+    if [ "${SPARK_CONNECT_ENABLED}" = "true" ]; then
+        echo ""
+        log_info "Step 9: Setting up Snowpark Connect for Scala..."
+
+        # 9a. pip install snowpark-connect, pyspark, opentelemetry exporter
+        log_info "  Installing Python packages for Spark Connect..."
+        for pkg in \
+            "snowpark-connect[jdk]" \
+            "pyspark==${SPARK_CONNECT_PYSPARK_VERSION}" \
+            "opentelemetry-exporter-otlp"; do
+            if python3 -m pip install "${pkg}" -q 2>/dev/null; then
+                log_info "    ${pkg}: OK"
+            else
+                log_warn "    ${pkg}: install failed (may still work)"
+            fi
+        done
+
+        # 9b. Fetch spark-connect-client-jvm JARs
+        SPARK_CONNECT_CP_FILE="${JAR_DIR}/spark_connect_classpath.txt"
+        SC_ARTIFACT="org.apache.spark:spark-connect-client-jvm_${SCALA_VERSION}:${SPARK_CONNECT_PYSPARK_VERSION}"
+
+        if [ "${FORCE_REINSTALL}" = false ] && [ -f "${SPARK_CONNECT_CP_FILE}" ] && [ -s "${SPARK_CONNECT_CP_FILE}" ]; then
+            log_info "  [OK] Spark Connect client JARs already resolved (skipping)"
+        else
+            log_info "  Resolving ${SC_ARTIFACT}..."
+            retry_command \
+                "cs_fetch '${SC_ARTIFACT}' --classpath > '${SPARK_CONNECT_CP_FILE}'" \
+                "Resolve Spark Connect client JARs"
+
+            if [ -f "${SPARK_CONNECT_CP_FILE}" ] && [ -s "${SPARK_CONNECT_CP_FILE}" ]; then
+                local sc_jar_count
+                sc_jar_count=$(tr ':' '\n' < "${SPARK_CONNECT_CP_FILE}" | wc -l | tr -d ' ')
+                log_info "  Spark Connect resolved: ${sc_jar_count} JARs"
+            else
+                log_warn "  Failed to resolve Spark Connect JARs"
+            fi
+        fi
+
+        log_info "  Spark Connect setup complete"
+    else
+        log_info ""
+        log_info "Step 9: Spark Connect (skipped — not enabled in config)"
+    fi
+
+    # =========================================================================
+    # Step 10: Summary
     # =========================================================================
 
     echo ""
@@ -556,6 +628,12 @@ PYEOF
         log_info "  REPL engine:      Ammonite (Option A2)"
     else
         log_info "  REPL engine:      IMain (Option A — Ammonite not resolved)"
+    fi
+
+    if [ "${SPARK_CONNECT_ENABLED}" = "true" ]; then
+        log_info "  Spark Connect:    enabled (port ${SPARK_CONNECT_SERVER_PORT})"
+    else
+        log_info "  Spark Connect:    disabled"
     fi
 
     echo ""

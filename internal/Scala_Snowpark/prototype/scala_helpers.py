@@ -8,6 +8,8 @@ This module provides:
 - -i / -o flags for Python <-> Scala variable transfer
 - Automatic Snowpark DataFrame interop via SQL plan transfer
 - Snowpark session credential injection (SPCS OAuth + PAT fallback)
+- Snowpark Connect for Scala (opt-in): local Spark Connect gRPC server
+  + Scala SparkSession bound as `spark` in %%scala cells
 - Environment diagnostics
 
 Architecture:
@@ -117,6 +119,7 @@ def setup_scala_environment(
         "jpype_installed": False,
         "jvm_started": False,
         "magic_registered": False,
+        "spark_connect_enabled": False,
         "errors": [],
     }
 
@@ -175,6 +178,18 @@ def setup_scala_environment(
             "JPype1 not available after install attempt"
         )
         return result
+
+    # --- Set JAVA_TOOL_OPTIONS (must happen before any JVM start) ---
+    # When Spark Connect is enabled, spc.start_session() may start the JVM
+    # before our jpype.startJVM() call. JAVA_TOOL_OPTIONS ensures --add-opens
+    # flags are applied regardless of who triggers JVM startup.
+    _add_opens = [
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+        "--add-opens=java.base/java.lang=ALL-UNNAMED",
+        "--add-opens=java.base/java.util=ALL-UNNAMED",
+    ]
+    os.environ["JAVA_TOOL_OPTIONS"] = " ".join(_add_opens)
 
     # --- Start JVM ---
     if not jpype.isJVMStarted():
@@ -236,6 +251,7 @@ def setup_scala_environment(
         except Exception as e:
             result["errors"].append(f"Failed to register %%scala magic: {e}")
 
+    result["spark_connect_enabled"] = metadata.get("spark_connect_enabled", False)
     result["success"] = len(result["errors"]) == 0
     return result
 
@@ -346,6 +362,12 @@ def _build_classpath(
 
     # Extra dependencies
     cp.extend(_read_classpath_file(metadata.get("extra_classpath_file", "")))
+
+    # Spark Connect client JARs (opt-in)
+    if metadata.get("spark_connect_enabled"):
+        cp.extend(_read_classpath_file(
+            metadata.get("spark_connect_classpath_file", "")
+        ))
 
     return cp
 
@@ -860,6 +882,128 @@ def create_snowpark_scala_session_code() -> str:
         'println(s"  Role:      ${_role}")\n'
         'println(s"  Database:  ${_db}")\n'
     )
+
+
+# =============================================================================
+# Spark Connect (opt-in)
+# =============================================================================
+
+def setup_spark_connect(
+    session,
+    port: int = 15002,
+    timeout: int = 30,
+) -> Dict[str, Any]:
+    """
+    Start a local Spark Connect gRPC server and create a Scala SparkSession.
+
+    The server runs in a background thread, consumes the Workspace's Snowpark
+    session (SPCS OAuth), and proxies requests to Snowflake. The Scala
+    SparkSession connects to sc://localhost:<port> and is bound as ``spark``
+    in the REPL so %%scala cells can use ``spark.sql(...)``.
+
+    Args:
+        session: Active Snowpark Python session (for auth)
+        port: gRPC server port (default: 15002)
+        timeout: Seconds to wait for server startup
+
+    Returns:
+        Dict with setup status and details
+    """
+    import socket
+    import threading
+
+    result = {
+        "success": False,
+        "server_port": port,
+        "pyspark_version": None,
+        "scala_spark_session": False,
+        "errors": [],
+    }
+
+    # Check if server is already listening (idempotent)
+    def _port_open():
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            return True
+        except (socket.error, OSError):
+            return False
+
+    if not _port_open():
+        try:
+            import snowflake.snowpark_connect as spc
+        except ImportError:
+            result["errors"].append(
+                "snowpark-connect not installed. "
+                "Set spark_connect.enabled: true in scala_packages.yaml "
+                "and re-run setup_scala_environment.sh"
+            )
+            return result
+
+        server_error = [None]
+
+        def _start_server():
+            try:
+                spc.start_session(
+                    is_daemon=False,
+                    remote_url=f"sc://localhost:{port}",
+                    snowpark_session=session,
+                )
+            except Exception as e:
+                server_error[0] = str(e)
+
+        thread = threading.Thread(target=_start_server, daemon=True)
+        thread.start()
+
+        import time
+        for attempt in range(timeout):
+            time.sleep(1)
+            if server_error[0]:
+                result["errors"].append(
+                    f"Spark Connect server failed: {server_error[0]}"
+                )
+                return result
+            if _port_open():
+                break
+        else:
+            result["errors"].append(
+                f"Spark Connect server did not start within {timeout}s"
+            )
+            return result
+
+    try:
+        import pyspark
+        result["pyspark_version"] = pyspark.__version__
+    except ImportError:
+        pass
+
+    # Create a Scala SparkSession connected to the local server
+    import jpype
+    if not jpype.isJVMStarted():
+        result["errors"].append("JVM not started — call setup_scala_environment() first")
+        return result
+
+    spark_code = (
+        "import org.apache.spark.sql.{SparkSession => SparkS}\n"
+        f'val spark = SparkS.builder().remote("sc://localhost:{port}")'
+        '.config("spark.sql.session.timeZone", "UTC").getOrCreate()\n'
+        'println("Spark Connect session ready: spark")'
+    )
+    success, output, errors = execute_scala(spark_code)
+    if success:
+        result["scala_spark_session"] = True
+        if output:
+            print(output)
+    else:
+        result["errors"].append(
+            f"Failed to create Scala SparkSession: {errors or output}"
+        )
+        return result
+
+    result["success"] = True
+    return result
 
 
 # =============================================================================
