@@ -231,6 +231,19 @@ def setup_scala_environment(
         _scala_state["jvm_started"] = True
         result["jvm_started"] = True
 
+    # --- Ensure thread context class loader is set ---
+    # When snowpark_connect starts the JVM in a background thread, the main
+    # thread's context class loader is null. Scala/Ammonite needs it to find
+    # classes on the classpath.
+    try:
+        Thread = jpype.JClass("java.lang.Thread")
+        current_thread = Thread.currentThread()
+        if current_thread.getContextClassLoader() is None:
+            ClassLoader = jpype.JClass("java.lang.ClassLoader")
+            current_thread.setContextClassLoader(ClassLoader.getSystemClassLoader())
+    except Exception:
+        pass  # best-effort; if this fails, the REPL init will report the error
+
     # --- Initialize Scala interpreter ---
     if prefer_ammonite and _has_ammonite_jars(metadata):
         try:
