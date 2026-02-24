@@ -50,6 +50,14 @@ will auto-add missing fields on open, causing spurious diffs and merge conflicts
    from Workspace first — it is the source of truth for metadata.
 6. **Never strip or overwrite** existing cell `id` values or metadata fields.
 
+## CRITICAL: EditNotebook tool does NOT add required metadata
+
+The `EditNotebook` tool creates cells WITHOUT `id`, `execution_count`,
+`outputs`, or proper `metadata` fields. After using EditNotebook to add
+or modify cells, you MUST run a fixup script (Python) to ensure every
+cell has the required structure before committing. Missing fields cause
+Workspace to reject the notebook as "corrupted or invalid format".
+
 ## Markdown Content Rules
 
 7. **No HTML anchor tags** in markdown cells — `<a id="..."></a>` renders as
