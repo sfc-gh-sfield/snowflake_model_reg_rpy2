@@ -180,9 +180,8 @@ def setup_scala_environment(
         return result
 
     # --- Set JAVA_TOOL_OPTIONS (must happen before any JVM start) ---
-    # When Spark Connect is enabled, spc.start_session() may start the JVM
-    # before our jpype.startJVM() call. JAVA_TOOL_OPTIONS ensures --add-opens
-    # flags are applied regardless of who triggers JVM startup.
+    # JAVA_TOOL_OPTIONS is picked up by the JVM automatically at startup,
+    # regardless of whether JPype or snowpark_connect starts it.
     _add_opens = [
         "--add-opens=java.base/java.nio=ALL-UNNAMED",
         "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
@@ -191,13 +190,29 @@ def setup_scala_environment(
     ]
     os.environ["JAVA_TOOL_OPTIONS"] = " ".join(_add_opens)
 
+    # --- Pre-set CLASSPATH env var ---
+    # When Spark Connect is enabled, spc.start_session() starts the JVM
+    # before we call jpype.startJVM(). The JVM picks up CLASSPATH from the
+    # environment, so we set it here so ALL our JARs (Snowpark, Ammonite,
+    # Scala, Spark Connect client) are available regardless of who starts
+    # the JVM.
+    classpath = _build_classpath(metadata, include_ammonite=prefer_ammonite)
+    jvm_options = _resolve_jvm_options(metadata)
+    result["jvm_options"] = jvm_options
+    os.environ["CLASSPATH"] = os.pathsep.join(classpath)
+
+    # --- Start Spark Connect server (before JVM) ---
+    # snowpark_connect.start_session() starts the JVM internally and refuses
+    # to run if one is already active. So it MUST run before jpype.startJVM().
+    spark_connect_enabled = metadata.get("spark_connect_enabled", False)
+    result["spark_connect_enabled"] = spark_connect_enabled
+
+    if spark_connect_enabled and not jpype.isJVMStarted():
+        _start_spark_connect_server_early(metadata, result)
+
     # --- Start JVM ---
     if not jpype.isJVMStarted():
         try:
-            classpath = _build_classpath(metadata, include_ammonite=prefer_ammonite)
-            jvm_options = _resolve_jvm_options(metadata)
-            result["jvm_options"] = jvm_options
-
             jpype.startJVM(
                 jpype.getDefaultJVMPath(),
                 *jvm_options,
@@ -211,6 +226,8 @@ def setup_scala_environment(
             result["errors"].append(f"Failed to start JVM: {e}")
             return result
     else:
+        # JVM already running (e.g. started by Spark Connect server)
+        import jpype.imports  # noqa: F811
         _scala_state["jvm_started"] = True
         result["jvm_started"] = True
 
@@ -370,6 +387,80 @@ def _build_classpath(
         ))
 
     return cp
+
+
+def _start_spark_connect_server_early(
+    metadata: Dict[str, Any], result: Dict[str, Any]
+) -> None:
+    """Start the Spark Connect gRPC server before the JVM is initialized.
+
+    snowpark_connect.start_session() starts the JVM internally and refuses
+    to run if one is already active. We call it here — before jpype.startJVM()
+    — so the server's JVM startup picks up CLASSPATH and JAVA_TOOL_OPTIONS
+    from the environment.
+    """
+    import socket
+    import threading
+    import time
+
+    port = metadata.get("spark_connect_server_port", 15002)
+
+    def _port_open():
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(1)
+            s.connect(("127.0.0.1", port))
+            s.close()
+            return True
+        except (socket.error, OSError):
+            return False
+
+    if _port_open():
+        return  # already running
+
+    try:
+        import snowflake.snowpark_connect as spc
+    except ImportError:
+        result["errors"].append(
+            "spark_connect.enabled is true but snowpark-connect is not installed. "
+            "Re-run setup_scala_environment.sh"
+        )
+        return
+
+    # Get the active Snowpark session for auth passthrough
+    try:
+        from snowflake.snowpark.context import get_active_session
+        session = get_active_session()
+    except Exception:
+        session = None
+
+    server_error = [None]
+
+    def _run():
+        try:
+            spc.start_session(
+                is_daemon=False,
+                remote_url=f"sc://localhost:{port}",
+                snowpark_session=session,
+            )
+        except Exception as e:
+            server_error[0] = str(e)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+
+    for attempt in range(30):
+        time.sleep(1)
+        if server_error[0]:
+            result["errors"].append(
+                f"Spark Connect server failed: {server_error[0]}"
+            )
+            return
+        if _port_open():
+            print(f"  Spark Connect server listening on localhost:{port}")
+            break
+    else:
+        result["errors"].append("Spark Connect server did not start within 30s")
 
 
 def _has_ammonite_jars(metadata: Dict[str, Any]) -> bool:
@@ -889,20 +980,21 @@ def create_snowpark_scala_session_code() -> str:
 # =============================================================================
 
 def setup_spark_connect(
-    session,
+    session=None,
     port: int = 15002,
     timeout: int = 30,
 ) -> Dict[str, Any]:
     """
-    Start a local Spark Connect gRPC server and create a Scala SparkSession.
+    Create a Scala SparkSession connected to the local Spark Connect server.
 
-    The server runs in a background thread, consumes the Workspace's Snowpark
-    session (SPCS OAuth), and proxies requests to Snowflake. The Scala
-    SparkSession connects to sc://localhost:<port> and is bound as ``spark``
-    in the REPL so %%scala cells can use ``spark.sql(...)``.
+    The server should already be running (started during
+    setup_scala_environment() when spark_connect.enabled is true). If not,
+    this function will attempt to start it, though that requires the JVM to
+    not yet be running.
 
     Args:
-        session: Active Snowpark Python session (for auth)
+        session: Active Snowpark Python session (for auth, only needed if
+                 server is not already running)
         port: gRPC server port (default: 15002)
         timeout: Seconds to wait for server startup
 
@@ -910,7 +1002,6 @@ def setup_spark_connect(
         Dict with setup status and details
     """
     import socket
-    import threading
 
     result = {
         "success": False,
@@ -920,7 +1011,6 @@ def setup_spark_connect(
         "errors": [],
     }
 
-    # Check if server is already listening (idempotent)
     def _port_open():
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -932,46 +1022,13 @@ def setup_spark_connect(
             return False
 
     if not _port_open():
-        try:
-            import snowflake.snowpark_connect as spc
-        except ImportError:
-            result["errors"].append(
-                "snowpark-connect not installed. "
-                "Set spark_connect.enabled: true in scala_packages.yaml "
-                "and re-run setup_scala_environment.sh"
-            )
-            return result
-
-        server_error = [None]
-
-        def _start_server():
-            try:
-                spc.start_session(
-                    is_daemon=False,
-                    remote_url=f"sc://localhost:{port}",
-                    snowpark_session=session,
-                )
-            except Exception as e:
-                server_error[0] = str(e)
-
-        thread = threading.Thread(target=_start_server, daemon=True)
-        thread.start()
-
-        import time
-        for attempt in range(timeout):
-            time.sleep(1)
-            if server_error[0]:
-                result["errors"].append(
-                    f"Spark Connect server failed: {server_error[0]}"
-                )
-                return result
-            if _port_open():
-                break
-        else:
-            result["errors"].append(
-                f"Spark Connect server did not start within {timeout}s"
-            )
-            return result
+        result["errors"].append(
+            "Spark Connect server is not running. "
+            "Ensure spark_connect.enabled: true in scala_packages.yaml "
+            "and re-run setup_scala_environment.sh, then "
+            "setup_scala_environment() (which starts the server)."
+        )
+        return result
 
     try:
         import pyspark
