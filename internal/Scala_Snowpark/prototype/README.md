@@ -8,9 +8,10 @@
 
 ## Overview
 
-This prototype enables **Scala execution** and **Snowpark Scala** within
-Snowflake Workspace Notebooks using `%%scala` and `%scala` cell/line magics.
-It follows the same architectural pattern as the R/rpy2 integration:
+This prototype enables **Scala execution**, **Snowpark Scala**, and
+**Snowpark Connect for Scala** within Snowflake Workspace Notebooks using
+`%%scala` and `%scala` cell/line magics. It follows the same architectural
+pattern as the R/rpy2 integration:
 
 | Layer | R Solution | Scala Solution (this prototype) |
 |-------|-----------|-------------------------------|
@@ -19,6 +20,11 @@ It follows the same architectural pattern as the R/rpy2 integration:
 | Magic | `%%R` from rpy2 | `%%scala` / `%scala` (custom, in `scala_helpers.py`) |
 | REPL | R interpreter | Scala IMain (Ammonite-lite mode) |
 | Auth | ADBC + PAT | Snowpark Scala + **SPCS OAuth token** |
+| Spark Connect | N/A | Snowpark Connect gRPC proxy (opt-in) |
+
+**Two APIs, one notebook:** When Spark Connect is enabled, users get both
+`sfSession.sql(...)` (Snowpark Scala, direct JDBC) and `spark.sql(...)`
+(Spark SQL via the Spark Connect gRPC proxy) in the same `%%scala` cells.
 
 ---
 
@@ -51,12 +57,13 @@ directory (alongside your `.ipynb` file).
 This installs (~30s, or ~2-4 minutes on first cold start):
 - **micromamba** (if not already present from R setup)
 - **OpenJDK 17** via micromamba (~174MB, largest single download)
-- **coursier** (JVM dependency resolver)
+- **coursier JAR launcher** (JVM dependency resolver, JAR-based to avoid GraalVM native image issues)
 - **Scala 2.12** compiler JARs via coursier
 - **Ammonite** REPL JARs via coursier
 - **Snowpark 1.18.0** + all transitive dependencies via coursier
 - **slf4j-nop** (silences SLF4J 1.x binding warning from Ammonite)
 - **JPype1** into the kernel's Python venv
+- **(If Spark Connect enabled):** `snowpark-connect[jdk]`, `pyspark`, `opentelemetry-exporter-otlp`, Spark Connect client JARs
 
 ### 3. Initialize and use %%scala
 
@@ -300,6 +307,87 @@ memory, `auto` will likely select 4 GB (the configured cap).
 
 ---
 
+## Spark Connect for Scala (Opt-in)
+
+When `spark_connect.enabled: true` is set in `scala_packages.yaml`, the
+prototype also sets up **Snowpark Connect for Scala**, providing a native
+Spark SQL experience alongside Snowpark Scala.
+
+### Architecture
+
+```
+%%scala cell
+    │
+    ├── sfSession.sql(...)  →  Snowpark Scala (direct JDBC to Snowflake)
+    │
+    └── spark.sql(...)      →  Spark Connect client (Scala)
+                                   │ gRPC (localhost:15002)
+                                   ▼
+                              snowpark_connect server (Python)
+                                   │ SPCS OAuth token
+                                   ▼
+                              Snowflake
+```
+
+### How It Works
+
+1. **Single JVM:** Both Snowpark Scala and the Spark Connect client share
+   the same in-process JVM. The JVM classpath includes Snowpark JARs,
+   Scala compiler, Ammonite, Spark Connect client JARs, and PySpark's
+   bundled JARs (spark-sql, spark-catalyst, etc.).
+
+2. **Python gRPC server:** `snowpark_connect` runs a local gRPC server
+   (port 15002) that translates Spark Connect protocol messages into
+   Snowpark Python operations, consuming the Workspace's SPCS OAuth token.
+
+3. **JVM sharing challenge:** `snowpark_connect.start_session()` normally
+   starts its own JVM and refuses to run when one is already active.
+   We solve this by:
+   - Starting **our** JVM first (with the full classpath)
+   - Monkey-patching `spc.server.start_jvm` to be a no-op
+   - The gRPC server then reuses the existing JVM
+
+4. **Auth flow:** No additional credentials needed. The Python proxy
+   consumes the same SPCS OAuth token used by Snowpark Python.
+
+### Configuration
+
+```yaml
+spark_connect:
+  enabled: true           # Set to true to enable
+  pyspark_version: "3.5.6"
+  server_port: 15002
+```
+
+### Usage
+
+After `setup_scala_environment()` (which starts the Spark Connect server
+automatically when enabled), run the setup function:
+
+```python
+from scala_helpers import setup_spark_connect
+sc_result = setup_spark_connect()
+```
+
+Then use `spark` in `%%scala` cells:
+
+```python
+%%scala
+spark.sql("SELECT 1 AS id, 'hello from Spark Connect' AS msg").show()
+```
+
+### Spark Connect Limitations
+
+| Limitation | Details |
+|------------|---------|
+| `CURRENT_ROLE()` unsupported | Snowpark Connect error 4001; use `CURRENT_USER()` |
+| `SHOW TABLES` unsupported | Use `INFORMATION_SCHEMA.TABLES` instead |
+| Some system functions missing | Proxy translates Spark SQL to Snowpark; not all functions mapped |
+| Adds ~30s install time | pip installs snowpark-connect, pyspark (~200MB) |
+| Server startup ~5s | Local gRPC server takes a few seconds to become ready |
+
+---
+
 ## Interpreter Modes
 
 The prototype supports two REPL backends:
@@ -330,6 +418,8 @@ All components are open-source with permissive or standard licenses:
 | Ammonite | MIT | Permissive |
 | Snowpark Scala | Apache 2.0 | Snowflake's open-source SDK |
 | SLF4J | MIT | Included transitively via Snowpark |
+| Snowpark Connect | Snowflake proprietary | Snowflake's Spark Connect proxy |
+| PySpark | Apache 2.0 | Spark Connect client + bundled JARs |
 
 ---
 
@@ -364,6 +454,8 @@ Issues discovered and resolved during prototype development:
 | Ammonite API undocumented | "ammonite-lite" mode as workaround | Investigate Ammonite `Main` API |
 | Separate Snowflake sessions | Python and Scala sessions are independent | SQL plan transfer via `-i`/`-o`, or transient tables |
 | `%scala` can't use `s"${...}"` | IPython expands `${expr}` before Scala sees it | Use `%%scala` cells for string interpolation |
+| Spark Connect: limited SQL functions | Proxy doesn't map all Snowflake system functions | Use Snowpark Scala (`sfSession`) for full Snowflake SQL |
+| Spark Connect: single JVM constraint | Both Snowpark + Spark Connect must share one JVM | Handled by monkey-patching `start_jvm`; fragile across spc versions |
 
 ---
 
@@ -380,6 +472,12 @@ Issues discovered and resolved during prototype development:
 | `Invalid OAuth access token` | SPCS token expired | Restart container (refreshes token) |
 | `NullPointerException` on session | Credentials not set as System properties | Run `inject_session_credentials(session)` before Scala session |
 | `Object 'X' does not exist` | Temp table from different session | Use `TRANSIENT TABLE` instead of `TEMPORARY TABLE` |
+| Spark Connect: "JVM must not be running" | `spc.start_session()` refuses existing JVM | Monkey-patch `spc.server.start_jvm` to no-op; start our JVM first |
+| Spark Connect: `SQLConf not found` | PySpark JARs missing from classpath | Include `pyspark/jars/*.jar` in classpath when Spark Connect enabled |
+| Spark Connect: null context class loader | When spc starts JVM in background thread | Start our JVM first (avoids the issue entirely) |
+| Coursier native binary crashes | GraalVM `PhysicalMemory.size` failure in containers | Use coursier JAR launcher (`java -jar coursier.jar`) instead |
+| OpenTelemetry warning on import | Optional telemetry exporters not installed | pip install `opentelemetry-exporter-otlp` |
+| `spark.sql.session.timeZone` missing | Spark Connect requires explicit timezone | Set `.config("spark.sql.session.timeZone", "UTC")` on SparkSession |
 
 ---
 
