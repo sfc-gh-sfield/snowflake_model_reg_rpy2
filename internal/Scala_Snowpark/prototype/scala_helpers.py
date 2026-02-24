@@ -381,6 +381,19 @@ def _build_classpath(
             metadata.get("spark_connect_classpath_file", "")
         ))
 
+        # PySpark's bundled JARs (spark-sql, spark-catalyst, etc.) are needed
+        # by the snowpark_connect server at runtime. Normally spc.start_jvm()
+        # adds these, but we start the JVM ourselves and monkey-patch
+        # start_jvm, so we must include them explicitly.
+        try:
+            import pyspark
+            pyspark_jars_dir = os.path.join(os.path.dirname(pyspark.__file__), "jars")
+            if os.path.isdir(pyspark_jars_dir):
+                import glob
+                cp.extend(sorted(glob.glob(os.path.join(pyspark_jars_dir, "*.jar"))))
+        except ImportError:
+            pass
+
     return cp
 
 
