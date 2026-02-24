@@ -1553,25 +1553,35 @@ def cleanup_interop_views() -> int:
     Drop any tables/views created during DataFrame interop transfers.
     Call this at the end of a notebook.
 
+    Uses the Snowpark session exclusively (not PySpark) because Spark
+    Connect clients have isolated sessions and can't see each other's
+    objects.
+
     Returns the number of objects cleaned up.
     """
+    from contextlib import suppress
+
     session = _scala_state.get("python_session")
 
     dropped = 0
 
-    all_objects = list(_interop_views) + list(_spark_interop_views)
+    all_objects = list(dict.fromkeys(
+        list(_interop_views) + list(_spark_interop_views)
+    ))
 
-    if session and all_objects:
-        for obj_name in all_objects:
-            try:
-                session.sql(f"DROP TABLE IF EXISTS {obj_name}").collect()
-                dropped += 1
-            except Exception:
-                try:
-                    session.sql(f"DROP VIEW IF EXISTS {obj_name}").collect()
-                    dropped += 1
-                except Exception:
-                    pass
+    for obj_name in all_objects:
+        if not session:
+            continue
+        ok = False
+        with suppress(Exception):
+            session.sql(f"DROP TABLE IF EXISTS {obj_name}").collect()
+            ok = True
+        if not ok:
+            with suppress(Exception):
+                session.sql(f"DROP VIEW IF EXISTS {obj_name}").collect()
+                ok = True
+        if ok:
+            dropped += 1
 
     _interop_views.clear()
     _spark_interop_views.clear()
