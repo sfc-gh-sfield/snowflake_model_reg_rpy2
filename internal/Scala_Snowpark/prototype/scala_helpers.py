@@ -190,27 +190,11 @@ def setup_scala_environment(
     ]
     os.environ["JAVA_TOOL_OPTIONS"] = " ".join(_add_opens)
 
-    # --- Pre-set CLASSPATH env var ---
-    # When Spark Connect is enabled, spc.start_session() starts the JVM
-    # before we call jpype.startJVM(). The JVM picks up CLASSPATH from the
-    # environment, so we set it here so ALL our JARs (Snowpark, Ammonite,
-    # Scala, Spark Connect client) are available regardless of who starts
-    # the JVM.
+    # --- Start JVM (we control the classpath) ---
     classpath = _build_classpath(metadata, include_ammonite=prefer_ammonite)
     jvm_options = _resolve_jvm_options(metadata)
     result["jvm_options"] = jvm_options
-    os.environ["CLASSPATH"] = os.pathsep.join(classpath)
 
-    # --- Start Spark Connect server (before JVM) ---
-    # snowpark_connect.start_session() starts the JVM internally and refuses
-    # to run if one is already active. So it MUST run before jpype.startJVM().
-    spark_connect_enabled = metadata.get("spark_connect_enabled", False)
-    result["spark_connect_enabled"] = spark_connect_enabled
-
-    if spark_connect_enabled and not jpype.isJVMStarted():
-        _start_spark_connect_server_early(metadata, result)
-
-    # --- Start JVM ---
     if not jpype.isJVMStarted():
         try:
             jpype.startJVM(
@@ -226,23 +210,21 @@ def setup_scala_environment(
             result["errors"].append(f"Failed to start JVM: {e}")
             return result
     else:
-        # JVM already running (e.g. started by Spark Connect server)
         import jpype.imports  # noqa: F811
         _scala_state["jvm_started"] = True
         result["jvm_started"] = True
 
-    # --- Ensure thread context class loader is set ---
-    # When snowpark_connect starts the JVM in a background thread, the main
-    # thread's context class loader is null. Scala/Ammonite needs it to find
-    # classes on the classpath.
-    try:
-        Thread = jpype.JClass("java.lang.Thread")
-        current_thread = Thread.currentThread()
-        if current_thread.getContextClassLoader() is None:
-            ClassLoader = jpype.JClass("java.lang.ClassLoader")
-            current_thread.setContextClassLoader(ClassLoader.getSystemClassLoader())
-    except Exception:
-        pass  # best-effort; if this fails, the REPL init will report the error
+    # --- Start Spark Connect server (after JVM, with monkey-patch) ---
+    # snowpark_connect.start_session() internally calls start_jvm() which
+    # refuses to run when a JVM is already active. We need OUR JVM (with
+    # the full Snowpark/Ammonite/Scala classpath) so we start it first,
+    # then patch start_jvm to be a no-op. The gRPC server uses the existing
+    # JVM — it communicates over TCP so same-process is fine.
+    spark_connect_enabled = metadata.get("spark_connect_enabled", False)
+    result["spark_connect_enabled"] = spark_connect_enabled
+
+    if spark_connect_enabled:
+        _start_spark_connect_server_early(metadata, result)
 
     # --- Initialize Scala interpreter ---
     if prefer_ammonite and _has_ammonite_jars(metadata):
@@ -405,12 +387,12 @@ def _build_classpath(
 def _start_spark_connect_server_early(
     metadata: Dict[str, Any], result: Dict[str, Any]
 ) -> None:
-    """Start the Spark Connect gRPC server before the JVM is initialized.
+    """Start the Spark Connect gRPC server using the already-running JVM.
 
-    snowpark_connect.start_session() starts the JVM internally and refuses
-    to run if one is already active. We call it here — before jpype.startJVM()
-    — so the server's JVM startup picks up CLASSPATH and JAVA_TOOL_OPTIONS
-    from the environment.
+    snowpark_connect.start_session() internally calls start_jvm() which
+    refuses to run when a JVM is already active. We monkey-patch start_jvm
+    to be a no-op so the server reuses our JVM (which has the full
+    Snowpark/Ammonite/Scala classpath).
     """
     import socket
     import threading
@@ -433,6 +415,7 @@ def _start_spark_connect_server_early(
 
     try:
         import snowflake.snowpark_connect as spc
+        import snowflake.snowpark_connect.server as spc_server
     except ImportError:
         result["errors"].append(
             "spark_connect.enabled is true but snowpark-connect is not installed. "
@@ -440,7 +423,19 @@ def _start_spark_connect_server_early(
         )
         return
 
-    # Get the active Snowpark session for auth passthrough
+    # Monkey-patch start_jvm to skip the "JVM already running" check.
+    # Our JVM is already started with the full classpath; the server
+    # just needs to set up its gRPC servicer on top of it.
+    _original_start_jvm = spc_server.start_jvm
+
+    def _patched_start_jvm():
+        import jpype
+        if jpype.isJVMStarted():
+            return
+        _original_start_jvm()
+
+    spc_server.start_jvm = _patched_start_jvm
+
     try:
         from snowflake.snowpark.context import get_active_session
         session = get_active_session()
@@ -468,12 +463,15 @@ def _start_spark_connect_server_early(
             result["errors"].append(
                 f"Spark Connect server failed: {server_error[0]}"
             )
+            spc_server.start_jvm = _original_start_jvm
             return
         if _port_open():
             print(f"  Spark Connect server listening on localhost:{port}")
             break
     else:
         result["errors"].append("Spark Connect server did not start within 30s")
+
+    spc_server.start_jvm = _original_start_jvm
 
 
 def _has_ammonite_jars(metadata: Dict[str, Any]) -> bool:
