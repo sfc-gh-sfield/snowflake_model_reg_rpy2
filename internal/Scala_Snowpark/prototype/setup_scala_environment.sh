@@ -54,6 +54,7 @@ EXTRA_DEPS=""
 SPARK_CONNECT_ENABLED="false"
 SPARK_CONNECT_PYSPARK_VERSION="3.5.6"
 SPARK_CONNECT_SERVER_PORT="15002"
+SPARK_CONNECT_CP_FILE=""
 
 # =============================================================================
 # Logging Functions
@@ -494,48 +495,11 @@ PYEOF
     fi
 
     # =========================================================================
-    # Step 7: Write environment metadata
+    # Step 7: Install JPype into kernel venv
     # =========================================================================
 
     echo ""
-    log_info "Step 7: Writing environment metadata..."
-
-    METADATA_FILE="${JAR_DIR}/scala_env_metadata.json"
-    python3 << PYEOF
-import json
-
-metadata = {
-    "env_prefix": "${ENV_PREFIX}",
-    "java_home": "${JAVA_HOME}",
-    "java_version": "${JAVA_VERSION}",
-    "scala_version": "${SCALA_VERSION}",
-    "scala_full_version": "${SCALA_FULL_VERSION}",
-    "snowpark_version": "${SNOWPARK_VERSION}",
-    "snowpark_classpath_file": "${SNOWPARK_CP_FILE}",
-    "ammonite_version": "${AMMONITE_VERSION}",
-    "jar_dir": "${JAR_DIR}",
-    "scala_classpath_file": "${SCALA_CP_FILE}",
-    "ammonite_classpath_file": "${AMMONITE_CP_FILE}",
-    "extra_classpath_file": "${EXTRA_CP_FILE}",
-    "jvm_heap": "${JVM_HEAP}",
-    "jvm_options": "${JVM_OPTIONS}".split(),
-    "spark_connect_enabled": "${SPARK_CONNECT_ENABLED}" == "true",
-    "spark_connect_classpath_file": "${SPARK_CONNECT_CP_FILE}" or None,
-    "spark_connect_server_port": int("${SPARK_CONNECT_SERVER_PORT}"),
-}
-
-with open("${METADATA_FILE}", "w") as f:
-    json.dump(metadata, f, indent=2)
-
-print(f"  Metadata written to ${METADATA_FILE}")
-PYEOF
-
-    # =========================================================================
-    # Step 8: Install JPype into kernel venv
-    # =========================================================================
-
-    echo ""
-    log_info "Step 8: Installing JPype1 into Python kernel..."
+    log_info "Step 7: Installing JPype1 into Python kernel..."
 
     if python3 -c "import jpype" 2>/dev/null && [ "${FORCE_REINSTALL}" = false ]; then
         log_info "  [OK] JPype1 already installed (skipping)"
@@ -554,13 +518,12 @@ print(f"  JPype JVM path: {jvm_path}")
 PYEOF
 
     # =========================================================================
-    # Step 9: Spark Connect (conditional)
+    # Step 8: Spark Connect (conditional)
     # =========================================================================
 
-    SPARK_CONNECT_CP_FILE=""
     if [ "${SPARK_CONNECT_ENABLED}" = "true" ]; then
         echo ""
-        log_info "Step 9: Setting up Snowpark Connect for Scala..."
+        log_info "Step 8: Setting up Snowpark Connect for Scala..."
 
         # 9a. pip install snowpark-connect, pyspark, opentelemetry exporter
         log_info "  Installing Python packages for Spark Connect..."
@@ -599,8 +562,45 @@ PYEOF
         log_info "  Spark Connect setup complete"
     else
         log_info ""
-        log_info "Step 9: Spark Connect (skipped — not enabled in config)"
+        log_info "Step 8: Spark Connect (skipped — not enabled in config)"
     fi
+
+    # =========================================================================
+    # Step 9: Write environment metadata
+    # =========================================================================
+
+    echo ""
+    log_info "Step 9: Writing environment metadata..."
+
+    METADATA_FILE="${JAR_DIR}/scala_env_metadata.json"
+    python3 << PYEOF
+import json
+
+metadata = {
+    "env_prefix": "${ENV_PREFIX}",
+    "java_home": "${JAVA_HOME}",
+    "java_version": "${JAVA_VERSION}",
+    "scala_version": "${SCALA_VERSION}",
+    "scala_full_version": "${SCALA_FULL_VERSION}",
+    "snowpark_version": "${SNOWPARK_VERSION}",
+    "snowpark_classpath_file": "${SNOWPARK_CP_FILE}",
+    "ammonite_version": "${AMMONITE_VERSION}",
+    "jar_dir": "${JAR_DIR}",
+    "scala_classpath_file": "${SCALA_CP_FILE}",
+    "ammonite_classpath_file": "${AMMONITE_CP_FILE}",
+    "extra_classpath_file": "${EXTRA_CP_FILE}",
+    "jvm_heap": "${JVM_HEAP}",
+    "jvm_options": "${JVM_OPTIONS}".split(),
+    "spark_connect_enabled": "${SPARK_CONNECT_ENABLED}" == "true",
+    "spark_connect_classpath_file": "${SPARK_CONNECT_CP_FILE}" or None,
+    "spark_connect_server_port": int("${SPARK_CONNECT_SERVER_PORT}"),
+}
+
+with open("${METADATA_FILE}", "w") as f:
+    json.dump(metadata, f, indent=2)
+
+print(f"  Metadata written to ${METADATA_FILE}")
+PYEOF
 
     # =========================================================================
     # Step 10: Summary
