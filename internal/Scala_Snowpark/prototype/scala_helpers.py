@@ -1350,22 +1350,23 @@ _spark_interop_views: List[str] = []
 
 
 def _push_pyspark_df(name: str, df) -> bool:
-    """Push a PySpark DataFrame into Scala as a Spark DataFrame via temp view.
+    """Push a PySpark DataFrame into Scala as a Spark DataFrame.
 
-    Registers the PySpark DF as a Spark temp view on the shared Spark Connect
-    server, then reads it back in Scala with ``spark.table()``.
+    PySpark and Scala use separate client sessions on the Spark Connect
+    server, so temp views aren't shared.  Instead, materialise the DF to
+    a Snowflake transient table and read it back in Scala.
     """
-    view_name = f"_interop_{name}"
+    table_name = f"_INTEROP_PYSPARK_{name.upper()}"
     try:
-        df.createOrReplaceTempView(view_name)
+        df.write.mode("overwrite").saveAsTable(table_name)
     except Exception as e:
-        print(f"Warning: Failed to register temp view for '{name}': {e}",
+        print(f"Warning: Failed to write interop table for '{name}': {e}",
               file=sys.stderr)
         return False
 
-    _spark_interop_views.append(view_name)
+    _interop_views.append(table_name)
 
-    code = f'val {name} = spark.table("{view_name}")'
+    code = f'val {name} = spark.table("{table_name}")'
     success, output, errors = execute_scala(code)
 
     if not success:
@@ -1468,8 +1469,9 @@ def _pull_snowpark_df(name: str) -> Optional[Any]:
 def _pull_spark_df(name: str) -> Optional[Any]:
     """Pull a Scala Spark DataFrame into Python as a PySpark DataFrame.
 
-    Registers the Scala DF as a Spark temp view, then reads it from the
-    Python PySpark session connected to the same Spark Connect server.
+    PySpark and Scala use separate client sessions on the Spark Connect
+    server, so temp views aren't shared.  Instead, materialise the Scala
+    DF to a Snowflake table and read it back from the Python PySpark session.
     """
     spark_py = _scala_state.get("pyspark_session")
     if spark_py is None:
@@ -1480,23 +1482,26 @@ def _pull_spark_df(name: str) -> Optional[Any]:
         )
         return None
 
-    view_name = f"_interop_{name}"
-    code = f'{name}.createOrReplaceTempView("{view_name}")'
+    table_name = f"_INTEROP_SPARK_{name.upper()}"
+    code = (
+        f'{name}.write.mode("overwrite")'
+        f'.saveAsTable("{table_name}")'
+    )
     success, _, errors = execute_scala(code)
     if not success:
         print(
-            f"Warning: Could not register Spark temp view for '{name}'"
+            f"Warning: Could not materialise Spark DF '{name}' to table"
             + (f": {errors}" if errors else ""),
             file=sys.stderr,
         )
         return None
 
-    _spark_interop_views.append(view_name)
+    _interop_views.append(table_name)
 
     try:
-        return spark_py.table(view_name)
+        return spark_py.table(table_name)
     except Exception as e:
-        print(f"Warning: Could not read Spark temp view '{view_name}': {e}",
+        print(f"Warning: Could not read interop table '{table_name}': {e}",
               file=sys.stderr)
         return None
 
