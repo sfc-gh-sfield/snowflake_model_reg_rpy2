@@ -6,7 +6,8 @@ This module provides:
 - Scala REPL initialization (IMain or Ammonite)
 - %%scala cell magic and %scala line magic for Scala execution
 - -i / -o flags for Python <-> Scala variable transfer
-- Automatic Snowpark DataFrame interop via SQL plan transfer
+- Auto-detected DataFrame interop for both Snowpark and PySpark DFs
+- Cross-API transfers via -i:spark / -o:snowpark type hints
 - Snowpark session credential injection (SPCS OAuth + PAT fallback)
 - Snowpark Connect for Scala (opt-in): local Spark Connect gRPC server
   + Scala SparkSession bound as `spark` in %%scala cells
@@ -35,11 +36,15 @@ Usage:
     # %%scala -i count -o total
     # val total = (1 to count.asInstanceOf[Int]).sum
 
-    # Snowpark DataFrame interop (auto-detected):
+    # DataFrame interop (auto-detected — Snowpark and PySpark):
     # py_df = session.table("my_table")   # Python Snowpark DF
     # %%scala -i py_df -o result_df
     # val result_df = py_df.filter(col("id") > 10)
     # # result_df is now a Snowpark Python DataFrame in the notebook
+    #
+    # Cross-API with type hints:
+    # %%scala -i:spark py_df -o:snowpark spark_result
+    # val spark_result = py_df.groupBy("region").count()
 
 After setup with Snowpark session:
     from scala_helpers import inject_session_credentials
@@ -669,13 +674,19 @@ def _parse_magic_args(line: str) -> Dict[str, Any]:
     Parse flags from the ``%%scala`` / ``%scala`` magic line.
 
     Supported flags (modelled on rpy2's ``%%R``):
-        -i var1,var2    Push Python variables into Scala before execution
-        -o var1,var2    Pull Scala variables back into Python after execution
-        --silent        Suppress REPL variable-binding echo
-        --time          Print wall-clock execution time
+        -i var1,var2        Push Python variables into Scala (auto-detect type)
+        -i:spark var        Push as Spark DataFrame (cross-API if source is Snowpark)
+        -i:snowpark var     Push as Snowpark DataFrame (default for Snowpark DFs)
+        -o var1,var2        Pull Scala variables into Python (auto-detect type)
+        -o:spark var        Pull as PySpark DataFrame
+        -o:snowpark var     Pull as Snowpark Python DataFrame (cross-API if source is Spark)
+        --silent            Suppress REPL variable-binding echo
+        --time              Print wall-clock execution time
 
     Returns:
-        Dict with keys: inputs, outputs, silent, show_time
+        Dict with keys: inputs, outputs, silent, show_time.
+        inputs/outputs are lists of (name, type_hint) tuples where
+        type_hint is None (auto), "spark", or "snowpark".
     """
     import shlex
 
@@ -694,15 +705,26 @@ def _parse_magic_args(line: str) -> Dict[str, Any]:
     i = 0
     while i < len(tokens):
         tok = tokens[i]
-        if tok == "-i" and i + 1 < len(tokens):
-            args["inputs"].extend(
-                v.strip() for v in tokens[i + 1].split(",") if v.strip()
-            )
-            i += 2
-        elif tok == "-o" and i + 1 < len(tokens):
-            args["outputs"].extend(
-                v.strip() for v in tokens[i + 1].split(",") if v.strip()
-            )
+
+        # Match -i, -i:spark, -i:snowpark (and same for -o)
+        io_hint = None
+        io_key = None
+        if tok in ("-i", "-i:spark", "-i:snowpark"):
+            io_key = "inputs"
+            if tok == "-i:spark":
+                io_hint = "spark"
+            elif tok == "-i:snowpark":
+                io_hint = "snowpark"
+        elif tok in ("-o", "-o:spark", "-o:snowpark"):
+            io_key = "outputs"
+            if tok == "-o:spark":
+                io_hint = "spark"
+            elif tok == "-o:snowpark":
+                io_hint = "snowpark"
+
+        if io_key is not None and i + 1 < len(tokens):
+            names = [v.strip() for v in tokens[i + 1].split(",") if v.strip()]
+            args[io_key].extend((n, io_hint) for n in names)
             i += 2
         elif tok == "--silent":
             args["silent"] = True
@@ -716,14 +738,22 @@ def _parse_magic_args(line: str) -> Dict[str, Any]:
     return args
 
 
-def _push_inputs(names: List[str]) -> None:
-    """Push Python variables into the Scala interpreter by name.
+def _push_inputs(items: List[Tuple[str, Optional[str]]]) -> None:
+    """Push Python variables into the Scala interpreter.
 
-    Snowpark Python DataFrames are detected automatically and transferred
-    via their SQL query plan (no data materialisation).
+    Each *item* is a ``(name, type_hint)`` tuple where *type_hint* is
+    ``None`` (auto-detect), ``"spark"``, or ``"snowpark"``.
+
+    Dispatch logic:
+      - hint "spark" + Snowpark DF  → cross-API via ``spark.sql(sql_plan)``
+      - hint "spark" + PySpark DF   → same-API via temp view
+      - hint "snowpark" (or auto) + Snowpark DF → same-API via ``sfSession.sql()``
+      - hint "snowpark" + PySpark DF → not yet supported (warn)
+      - auto + PySpark DF → same-API via temp view (``spark.table()``)
+      - primitives/strings → direct bind regardless of hint
     """
     ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
-    for name in names:
+    for name, hint in items:
         if name not in ip.user_ns:
             print(
                 f"Warning: Python variable '{name}' not found, skipping",
@@ -732,22 +762,49 @@ def _push_inputs(names: List[str]) -> None:
             continue
 
         value = ip.user_ns[name]
+
         if _is_snowpark_python_df(value):
-            _push_snowpark_df(name, value)
+            if hint == "spark":
+                _push_snowpark_df_as_spark(name, value)
+            else:
+                _push_snowpark_df(name, value)
+        elif _is_pyspark_df(value):
+            if hint == "snowpark":
+                print(
+                    f"Warning: PySpark DF → Snowpark Scala is not supported; "
+                    f"pushing '{name}' as Spark DF instead",
+                    file=sys.stderr,
+                )
+            _push_pyspark_df(name, value)
         else:
             push_to_scala(name, value)
 
 
-def _pull_outputs(names: List[str]) -> None:
+def _pull_outputs(items: List[Tuple[str, Optional[str]]]) -> None:
     """Pull Scala variables back into the Python namespace.
 
-    If a Scala variable is a Snowpark DataFrame, it is transferred via
-    its SQL query plan and materialised as a Snowpark Python DataFrame.
+    Each *item* is a ``(name, type_hint)`` tuple where *type_hint* is
+    ``None`` (auto-detect), ``"spark"``, or ``"snowpark"``.
+
+    Dispatch logic:
+      - Snowpark Scala DF + hint "spark"    → not typical (warn, use default)
+      - Snowpark Scala DF + auto/snowpark   → SQL plan transfer (existing)
+      - Spark Scala DF + hint "snowpark"    → cross-API via transient table
+      - Spark Scala DF + auto/spark         → same-API via temp view → PySpark DF
+      - primitives                          → direct extract
     """
     ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
-    for name in names:
+    for name, hint in items:
         if _is_snowpark_scala_df(name):
             py_df = _pull_snowpark_df(name)
+            if py_df is not None:
+                ip.user_ns[name] = py_df
+                continue
+        elif _is_spark_scala_df(name):
+            if hint == "snowpark":
+                py_df = _pull_spark_df_as_snowpark(name)
+            else:
+                py_df = _pull_spark_df(name)
             if py_df is not None:
                 ip.user_ns[name] = py_df
                 continue
@@ -780,16 +837,21 @@ def _register_scala_magic() -> None:
             println(s"The answer is $x")
 
         Flags (on the %%scala line):
-            -i var1,var2   Push Python variables into Scala before execution
-            -o var1,var2   Pull Scala variables into Python after execution
-            --silent       Suppress REPL variable-binding output
-            --time         Print execution time
+            -i var1,var2        Push Python variables into Scala (auto-detect DF type)
+            -i:spark var        Force push as Spark DataFrame (cross-API for Snowpark DFs)
+            -i:snowpark var     Force push as Snowpark DataFrame (default for Snowpark DFs)
+            -o var1,var2        Pull Scala variables into Python (auto-detect DF type)
+            -o:spark var        Force pull as PySpark DataFrame
+            -o:snowpark var     Force pull as Snowpark DataFrame (cross-API for Spark DFs)
+            --silent            Suppress REPL variable-binding output
+            --time              Print execution time
 
         Examples:
             %%scala -i df_name -o result --time
-            val total = df_name.toInt + 10
-            val result = total * 2
-            println(s"result = $result")
+            val result = df_name.filter(col("id") > 10)
+
+            %%scala -i:spark snowpark_df -o:snowpark spark_result
+            val spark_result = snowpark_df.groupBy("region").count()
         """
         import time
 
@@ -1083,7 +1145,23 @@ def setup_spark_connect(
         )
         return result
 
-    result["success"] = True
+    # Create a Python-side PySpark SparkSession for DataFrame interop.
+    # This lets -i/-o auto-transfer PySpark DataFrames via temp views.
+    try:
+        from pyspark.sql import SparkSession as PySparkSession
+        spark_py = (
+            PySparkSession.builder
+            .remote(f"sc://localhost:{port}")
+            .config("spark.sql.session.timeZone", "UTC")
+            .getOrCreate()
+        )
+        _scala_state["pyspark_session"] = spark_py
+        result["pyspark_session"] = True
+    except Exception as e:
+        result["pyspark_session"] = False
+        result["errors"].append(f"PySpark session creation failed: {e}")
+
+    result["success"] = len(result["errors"]) == 0
     return result
 
 
@@ -1147,19 +1225,20 @@ def pull_from_scala(name: str) -> Any:
 
 
 # =============================================================================
-# Snowpark DataFrame Interop: Python <-> Scala via SQL Plan
+# DataFrame Interop: Python <-> Scala (Snowpark + Spark Connect)
 # =============================================================================
 #
-# Snowpark DataFrames are lazy SQL query plans — they don't hold data in
-# memory.  This lets us transfer DataFrames between Python and Scala by
-# passing the underlying SQL string instead of materialising data through
-# temp tables.
+# The -i / -o flags on %%scala auto-detect DataFrame types and pick the
+# right transfer strategy:
 #
-#   Python → Scala:  df.queries['queries'][-1]  →  sfSession.sql(sql)
-#   Scala  → Python: df.queries (Scala API)     →  session.sql(sql)
+#   Snowpark Python DF  → sfSession.sql(sql_plan)  → Snowpark Scala DF
+#   PySpark DF          → temp view → spark.table() → Spark Scala DF
+#   Snowpark Scala DF   → sql plan  → session.sql() → Snowpark Python DF
+#   Spark Scala DF      → temp view → spark_py.table() → PySpark DF
 #
-# When -i / -o flags reference a Snowpark DataFrame, the magic auto-detects
-# it and transfers the SQL plan rather than the raw JVM/Python object.
+# Cross-API transfers are available via type hints (-i:spark, -o:snowpark):
+#   Snowpark Python DF  -i:spark→  spark.sql(sql_plan)  → Spark Scala DF
+#   Spark Scala DF      -o:snowpark→  transient table   → Snowpark Python DF
 
 _interop_views: List[str] = []
 
@@ -1169,6 +1248,15 @@ def _is_snowpark_python_df(obj) -> bool:
     try:
         from snowflake.snowpark import DataFrame
         return isinstance(obj, DataFrame)
+    except ImportError:
+        return False
+
+
+def _is_pyspark_df(obj) -> bool:
+    """Check if *obj* is a PySpark DataFrame."""
+    try:
+        from pyspark.sql import DataFrame as PySparkDF
+        return isinstance(obj, PySparkDF)
     except ImportError:
         return False
 
@@ -1212,6 +1300,73 @@ def _push_snowpark_df(name: str, df) -> bool:
     return success
 
 
+def _push_snowpark_df_as_spark(name: str, df) -> bool:
+    """Push a Snowpark Python DataFrame into Scala as a **Spark** DataFrame.
+
+    Cross-API transfer: extracts the SQL plan from the Snowpark DF and
+    executes it via ``spark.sql()`` in Scala (through the Spark Connect
+    gRPC proxy).  The proxy forwards Snowflake SQL, so the same query
+    plan works with both ``sfSession.sql()`` and ``spark.sql()``.
+    """
+    import jpype
+
+    try:
+        queries = df.queries.get("queries", [])
+        if not queries:
+            print(f"Warning: DataFrame '{name}' has no SQL queries",
+                  file=sys.stderr)
+            return False
+        sql = queries[-1]
+    except (AttributeError, KeyError, IndexError) as e:
+        print(f"Warning: Could not extract SQL plan from '{name}': {e}",
+              file=sys.stderr)
+        return False
+
+    prop_key = f"_interop_sql_{name}"
+    System = jpype.JClass("java.lang.System")
+    System.setProperty(prop_key, sql)
+
+    code = f'val {name} = spark.sql(System.getProperty("{prop_key}"))'
+    success, output, errors = execute_scala(code)
+
+    System.clearProperty(prop_key)
+
+    if not success:
+        msg = errors or output
+        print(f"Warning: Failed to create Scala Spark DataFrame '{name}': {msg}",
+              file=sys.stderr)
+    return success
+
+
+_spark_interop_views: List[str] = []
+
+
+def _push_pyspark_df(name: str, df) -> bool:
+    """Push a PySpark DataFrame into Scala as a Spark DataFrame via temp view.
+
+    Registers the PySpark DF as a Spark temp view on the shared Spark Connect
+    server, then reads it back in Scala with ``spark.table()``.
+    """
+    view_name = f"_interop_{name}"
+    try:
+        df.createOrReplaceTempView(view_name)
+    except Exception as e:
+        print(f"Warning: Failed to register temp view for '{name}': {e}",
+              file=sys.stderr)
+        return False
+
+    _spark_interop_views.append(view_name)
+
+    code = f'val {name} = spark.table("{view_name}")'
+    success, output, errors = execute_scala(code)
+
+    if not success:
+        msg = errors or output
+        print(f"Warning: Failed to create Scala Spark DataFrame '{name}': {msg}",
+              file=sys.stderr)
+    return success
+
+
 def _is_snowpark_scala_df(name: str) -> bool:
     """Check if a Scala variable is a Snowpark DataFrame."""
     code = (
@@ -1223,6 +1378,23 @@ def _is_snowpark_scala_df(name: str) -> bool:
     if not success:
         return False
     val = pull_from_scala(f"_isdf_{name}")
+    try:
+        return bool(val)
+    except Exception:
+        return False
+
+
+def _is_spark_scala_df(name: str) -> bool:
+    """Check if a Scala variable is a Spark (Connect) DataFrame."""
+    code = (
+        f"val _issdf_{name}: Boolean = "
+        f"try {{ {name}.isInstanceOf[org.apache.spark.sql.Dataset[_]] }} "
+        f"catch {{ case _: Throwable => false }}"
+    )
+    success, _, _ = execute_scala(code)
+    if not success:
+        return False
+    val = pull_from_scala(f"_issdf_{name}")
     try:
         return bool(val)
     except Exception:
@@ -1285,25 +1457,119 @@ def _pull_snowpark_df(name: str) -> Optional[Any]:
     return None
 
 
-def cleanup_interop_views() -> int:
-    """
-    Drop any non-temporary views created during Scala → Python DataFrame
-    transfers.  Call this at the end of a notebook to tidy up.
+def _pull_spark_df(name: str) -> Optional[Any]:
+    """Pull a Scala Spark DataFrame into Python as a PySpark DataFrame.
 
-    Returns the number of views dropped.
+    Registers the Scala DF as a Spark temp view, then reads it from the
+    Python PySpark session connected to the same Spark Connect server.
+    """
+    spark_py = _scala_state.get("pyspark_session")
+    if spark_py is None:
+        print(
+            "Warning: No PySpark session available. "
+            "Call setup_spark_connect() first.",
+            file=sys.stderr,
+        )
+        return None
+
+    view_name = f"_interop_{name}"
+    code = f'{name}.createOrReplaceTempView("{view_name}")'
+    success, _, errors = execute_scala(code)
+    if not success:
+        print(
+            f"Warning: Could not register Spark temp view for '{name}'"
+            + (f": {errors}" if errors else ""),
+            file=sys.stderr,
+        )
+        return None
+
+    _spark_interop_views.append(view_name)
+
+    try:
+        return spark_py.table(view_name)
+    except Exception as e:
+        print(f"Warning: Could not read Spark temp view '{view_name}': {e}",
+              file=sys.stderr)
+        return None
+
+
+def _pull_spark_df_as_snowpark(name: str) -> Optional[Any]:
+    """Pull a Scala Spark DataFrame into Python as a **Snowpark** DataFrame.
+
+    Cross-API transfer: materialises the Spark DF to a Snowflake transient
+    table, then reads it from the Snowpark Python session.  The transient
+    table is tracked for cleanup.
     """
     session = _scala_state.get("python_session")
-    if not session:
-        return 0
+    if session is None:
+        print(
+            "Warning: No Python Snowpark session stored. "
+            "Call inject_session_credentials(session) first.",
+            file=sys.stderr,
+        )
+        return None
+
+    table_name = f"_INTEROP_SPARK_{name.upper()}"
+
+    code = (
+        f'{name}.write.mode("overwrite")'
+        f'.option("type", "transient")'
+        f'.saveAsTable("{table_name}")'
+    )
+    success, _, errors = execute_scala(code)
+    if not success:
+        print(
+            f"Warning: Could not materialise Spark DF '{name}' to table"
+            + (f": {errors}" if errors else ""),
+            file=sys.stderr,
+        )
+        return None
+
+    _interop_views.append(table_name)
+
+    try:
+        return session.table(table_name)
+    except Exception as e:
+        print(f"Warning: Could not read interop table '{table_name}': {e}",
+              file=sys.stderr)
+        return None
+
+
+def cleanup_interop_views() -> int:
+    """
+    Drop any non-temporary views and temp tables created during
+    DataFrame interop transfers.  Call this at the end of a notebook.
+
+    Returns the number of objects dropped.
+    """
+    session = _scala_state.get("python_session")
+    spark_py = _scala_state.get("pyspark_session")
 
     dropped = 0
-    for view in _interop_views[:]:
-        try:
-            session.sql(f"DROP VIEW IF EXISTS {view}").collect()
+
+    # Snowpark views / transient tables
+    if session:
+        for view in _interop_views[:]:
+            try:
+                session.sql(f"DROP TABLE IF EXISTS {view}").collect()
+            except Exception:
+                try:
+                    session.sql(f"DROP VIEW IF EXISTS {view}").collect()
+                except Exception:
+                    continue
             _interop_views.remove(view)
             dropped += 1
-        except Exception:
-            pass
+
+    # Spark temp views
+    if spark_py:
+        for view in _spark_interop_views[:]:
+            try:
+                spark_py.sql(f"DROP VIEW IF EXISTS {view}")
+            except Exception:
+                pass
+            _spark_interop_views.remove(view)
+            dropped += 1
+
     return dropped
 
 

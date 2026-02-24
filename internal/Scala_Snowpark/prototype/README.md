@@ -130,14 +130,22 @@ The `%%scala` cell magic supports flags modelled on rpy2's `%%R`:
 
 | Flag | Description | Example |
 |------|-------------|---------|
-| `-i var1,var2` | Push Python variables into Scala before execution | `%%scala -i name,count` |
-| `-o var1,var2` | Pull Scala variables back into Python after execution | `%%scala -o result` |
+| `-i var1,var2` | Push Python variables into Scala (auto-detect DF type) | `%%scala -i name,count` |
+| `-i:spark var` | Force push as Spark DataFrame (cross-API for Snowpark DFs) | `%%scala -i:spark py_df` |
+| `-i:snowpark var` | Force push as Snowpark DataFrame (default for Snowpark DFs) | `%%scala -i:snowpark py_df` |
+| `-o var1,var2` | Pull Scala variables into Python (auto-detect DF type) | `%%scala -o result` |
+| `-o:spark var` | Force pull as PySpark DataFrame | `%%scala -o:spark result` |
+| `-o:snowpark var` | Force pull as Snowpark Python DataFrame (cross-API for Spark DFs) | `%%scala -o:snowpark result` |
 | `--silent` | Suppress REPL variable-binding echo | `%%scala --silent` |
 | `--time` | Print wall-clock execution time | `%%scala --time` |
 
-Snowpark DataFrames passed via `-i` / `-o` are **auto-detected** and
-transferred via their SQL query plan (no data materialisation). See
-[Snowpark DataFrame Interop](#snowpark-dataframe-interop-sql-plan-transfer).
+DataFrames passed via `-i` / `-o` are **auto-detected** — both Snowpark
+and PySpark DataFrames are handled automatically. See
+[DataFrame Interop](#dataframe-interop).
+
+**Type hints** (`-i:spark`, `-o:snowpark`) enable cross-API transfers between
+Snowpark and Spark Connect DataFrames. Without a hint, same-API transfers are
+used (Snowpark→Snowpark, PySpark→Spark).
 
 Flags can be combined:
 
@@ -203,53 +211,112 @@ when the SPCS token file is not present.
 
 ---
 
-## Snowpark DataFrame Interop (SQL Plan Transfer)
+## DataFrame Interop
 
-When `-i` or `-o` reference a **Snowpark DataFrame**, the magic auto-detects
-it and transfers the underlying **SQL query plan** instead of materialising
-data through temp tables.
+The `-i` / `-o` flags auto-detect DataFrame types and pick the right
+transfer strategy. Both **Snowpark** and **PySpark** DataFrames are
+supported, plus cross-API transfers when Spark Connect is enabled.
 
-| Direction | Mechanism | API |
-|-----------|-----------|-----|
-| Python → Scala (`-i`) | `df.queries['queries'][-1]` → `sfSession.sql(sql)` | Documented Python property |
-| Scala → Python (`-o`) | `df.queries.last` → `session.sql(sql)` | Scala API (view fallback) |
+### Same-API Transfers (default)
 
-No data is copied — only the SQL string crosses the JPype bridge.
+| Direction | Source | Target | Mechanism |
+|-----------|--------|--------|-----------|
+| `-i` push | Snowpark Python DF | Snowpark Scala DF | SQL plan → `sfSession.sql()` |
+| `-i` push | PySpark DF | Spark Scala DF | Temp view → `spark.table()` |
+| `-o` pull | Snowpark Scala DF | Snowpark Python DF | SQL plan → `session.sql()` |
+| `-o` pull | Spark Scala DF | PySpark DF | Temp view → `spark_py.table()` |
 
-### Example
+No data is copied for Snowpark transfers — only the SQL string crosses
+the JPype bridge. PySpark transfers use Spark temp views (both Python and
+Scala talk to the same Spark Connect server).
+
+### Cross-API Transfers (type hints)
+
+| Flag | Source | Target | Mechanism |
+|------|--------|--------|-----------|
+| `-i:spark` | Snowpark Python DF | Spark Scala DF | SQL plan → `spark.sql()` |
+| `-o:snowpark` | Spark Scala DF | Snowpark Python DF | Materialise to transient table |
+
+Cross-API works because the Spark Connect proxy forwards Snowflake SQL,
+so the same query plan is valid in both `sfSession.sql()` and `spark.sql()`.
+
+### Examples
+
+**Snowpark interop (same-API):**
 
 ```python
-# Python: create a Snowpark DataFrame
 py_df = session.table("customers")
 ```
 
 ```python
 %%scala -i py_df -o high_value
-// py_df is now a Scala Snowpark DataFrame (same SQL plan)
 val high_value = py_df.filter(col("SPEND") > 1000)
 high_value.show()
 ```
 
 ```python
-# high_value is now a Snowpark Python DataFrame
-high_value.to_pandas()
+high_value.to_pandas()  # Snowpark Python DataFrame
+```
+
+**PySpark interop (same-API):**
+
+```python
+pyspark_df = spark_py.sql("SELECT * FROM my_table")
+```
+
+```python
+%%scala -i pyspark_df -o result
+val result = pyspark_df.filter(col("value") > 100)
+```
+
+```python
+result.toPandas()  # PySpark DataFrame
+```
+
+**Cross-API (Snowpark → Spark → Snowpark):**
+
+```python
+snowpark_df = session.sql("SELECT * FROM sales")
+```
+
+```python
+%%scala -i:spark snowpark_df -o:snowpark aggregated
+import org.apache.spark.sql.functions._
+val aggregated = snowpark_df.groupBy("region").agg(sum("revenue").as("total"))
+```
+
+```python
+aggregated.show()  # Back as Snowpark Python DataFrame
 ```
 
 ### How it works
 
-1. **Python → Scala:** `_push_snowpark_df()` extracts the last SQL from
+1. **Snowpark Python → Scala:** `_push_snowpark_df()` extracts the last SQL from
    `df.queries['queries']` and passes it through a Java System property
    (avoiding all string-escaping issues). Scala receives it via
    `sfSession.sql(System.getProperty(...))`.
 
-2. **Scala → Python:** `_pull_snowpark_df()` tries the Scala
-   `DataFrame.queries` API first. If that isn't available, it falls back to
-   `createOrReplaceView()` (non-temporary, tracked for cleanup via
-   `cleanup_interop_views()`).
+2. **PySpark → Scala:** `_push_pyspark_df()` registers the PySpark DF as a temp
+   view on the shared Spark Connect server, then reads it in Scala with
+   `spark.table(view_name)`.
 
-3. **Cleanup:** If the view fallback was used, call
-   `cleanup_interop_views()` at the end of the notebook to drop any
-   interop views.
+3. **Cross-API push (`-i:spark`):** `_push_snowpark_df_as_spark()` extracts the
+   SQL plan from the Snowpark DF but passes it to `spark.sql()` instead of
+   `sfSession.sql()`, "lifting" the DF into the Spark world.
+
+4. **Snowpark Scala → Python:** `_pull_snowpark_df()` tries the Scala
+   `DataFrame.queries` API first. If that isn't available, it falls back to
+   `createOrReplaceView()` (non-temporary, tracked for cleanup).
+
+5. **Spark Scala → Python:** `_pull_spark_df()` registers the Scala Spark DF as a
+   temp view and reads it from the Python PySpark session.
+
+6. **Cross-API pull (`-o:snowpark`):** `_pull_spark_df_as_snowpark()` materialises
+   the Spark DF to a Snowflake transient table, then reads it from the Python
+   Snowpark session.
+
+7. **Cleanup:** Call `cleanup_interop_views()` at the end of the notebook to drop
+   any interop views and transient tables.
 
 ---
 
@@ -439,6 +506,9 @@ Issues discovered and resolved during prototype development:
 | Snowpark uber-JAR 404 | Artifact ID changed to include Scala suffix | Use coursier with `com.snowflake:snowpark_2.12:1.18.0` |
 | Scala string interpolation errors | Nested quotes in `s"..."` blocks | Extract SQL results into intermediate `val` bindings |
 | Kernel restart not enough | JVM persists in SPCS container process | Full container restart required for JVM option changes |
+| PySpark DF interop via temp views | Both Python and Scala connect to the same Spark Connect server | Register temp view from one side, read with `spark.table()` from the other |
+| Cross-API Snowpark→Spark via SQL plan | Spark Connect proxies Snowflake SQL, so same query plan works | Pass SQL to `spark.sql()` instead of `sfSession.sql()` with `-i:spark` |
+| Cross-API Spark→Snowpark materialisation | Spark DFs don't expose a simple SQL plan for Snowpark | Materialise to transient table, read from Snowpark, track for cleanup |
 
 ---
 
@@ -456,6 +526,8 @@ Issues discovered and resolved during prototype development:
 | `%scala` can't use `s"${...}"` | IPython expands `${expr}` before Scala sees it | Use `%%scala` cells for string interpolation |
 | Spark Connect: limited SQL functions | Proxy doesn't map all Snowflake system functions | Use Snowpark Scala (`sfSession`) for full Snowflake SQL |
 | Spark Connect: single JVM constraint | Both Snowpark + Spark Connect must share one JVM | Handled by monkey-patching `start_jvm`; fragile across spc versions |
+| `-o:snowpark` materialises data | Cross-API pull writes a transient table then reads it back | Inherent — Spark DFs don't expose a SQL plan Snowpark can consume directly |
+| PySpark→Snowpark push not supported | No direct path from PySpark DF to Scala Snowpark DF | Warn and push as Spark DF instead; user can convert in Scala |
 
 ---
 
