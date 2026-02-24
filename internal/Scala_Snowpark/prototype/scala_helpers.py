@@ -1550,38 +1550,31 @@ def _pull_spark_df_as_snowpark(name: str) -> Optional[Any]:
 
 def cleanup_interop_views() -> int:
     """
-    Drop any non-temporary views and temp tables created during
-    DataFrame interop transfers.  Call this at the end of a notebook.
+    Drop any tables/views created during DataFrame interop transfers.
+    Call this at the end of a notebook.
 
-    Returns the number of objects dropped.
+    Returns the number of objects cleaned up.
     """
     session = _scala_state.get("python_session")
-    spark_py = _scala_state.get("pyspark_session")
 
     dropped = 0
 
-    # Snowpark views / transient tables
-    if session:
-        for view in _interop_views[:]:
+    all_objects = list(_interop_views) + list(_spark_interop_views)
+
+    if session and all_objects:
+        for obj_name in all_objects:
             try:
-                session.sql(f"DROP TABLE IF EXISTS {view}").collect()
+                session.sql(f"DROP TABLE IF EXISTS {obj_name}").collect()
+                dropped += 1
             except Exception:
                 try:
-                    session.sql(f"DROP VIEW IF EXISTS {view}").collect()
+                    session.sql(f"DROP VIEW IF EXISTS {obj_name}").collect()
+                    dropped += 1
                 except Exception:
-                    continue
-            _interop_views.remove(view)
-            dropped += 1
+                    pass
 
-    # Spark temp views
-    if spark_py:
-        for view in _spark_interop_views[:]:
-            try:
-                spark_py.sql(f"DROP VIEW IF EXISTS {view}")
-            except Exception:
-                pass
-            _spark_interop_views.remove(view)
-            dropped += 1
+    _interop_views.clear()
+    _spark_interop_views.clear()
 
     return dropped
 
