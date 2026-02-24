@@ -16,6 +16,7 @@ Usage:
 """
 
 import argparse
+import collections
 import json
 import re
 import sys
@@ -23,6 +24,11 @@ import uuid
 from pathlib import Path
 
 VALID_CELL_TYPES = {"code", "markdown", "raw"}
+
+EXPECTED_NBFORMAT = 4
+EXPECTED_NBFORMAT_MINOR = 5
+EXPECTED_KERNELSPEC = {"name": "jupyter", "display_name": "Jupyter Notebook"}
+TOP_LEVEL_KEY_ORDER = ["metadata", "nbformat_minor", "nbformat", "cells"]
 
 UUID4_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -48,10 +54,10 @@ def _issues_for_cell(idx: int, cell: dict) -> list[str]:
     elif not UUID4_RE.match(str(cid)):
         issues.append(f"Cell {idx} ({ct}): 'id' is not a valid UUID4 ({cid!r})")
 
-    # source
+    # source (nbformat allows both str and list[str])
     src = cell.get("source")
-    if not isinstance(src, list):
-        issues.append(f"Cell {idx} ({ct}): 'source' should be a list, got {type(src).__name__}")
+    if not isinstance(src, (str, list)):
+        issues.append(f"Cell {idx} ({ct}): 'source' should be str or list, got {type(src).__name__}")
 
     # metadata
     meta = cell.get("metadata")
@@ -71,8 +77,8 @@ def _issues_for_cell(idx: int, cell: dict) -> list[str]:
             issues.append(f"Cell {idx} (markdown): missing metadata.codeCollapsed")
 
     # Markdown content checks
-    if ct in ("markdown", "raw") and isinstance(src, list):
-        text = "".join(src)
+    if ct in ("markdown", "raw") and isinstance(src, (str, list)):
+        text = "".join(src) if isinstance(src, list) else src
         if HTML_ANCHOR_RE.search(text):
             issues.append(f"Cell {idx} (markdown): contains HTML anchor tag (<a id=...>)")
         if text.lstrip().startswith("---"):
@@ -112,6 +118,40 @@ def _fix_cell(cell: dict) -> int:
     return fixes
 
 
+def _issues_for_notebook(nb: dict) -> list[str]:
+    """Check top-level notebook structure."""
+    issues: list[str] = []
+    if nb.get("nbformat") != EXPECTED_NBFORMAT:
+        issues.append(f"nbformat is {nb.get('nbformat')}, expected {EXPECTED_NBFORMAT}")
+    if nb.get("nbformat_minor") != EXPECTED_NBFORMAT_MINOR:
+        issues.append(f"nbformat_minor is {nb.get('nbformat_minor')}, expected {EXPECTED_NBFORMAT_MINOR}")
+    ks = nb.get("metadata", {}).get("kernelspec", {})
+    if ks.get("name") != EXPECTED_KERNELSPEC["name"]:
+        issues.append(f"kernelspec.name is {ks.get('name')!r}, expected {EXPECTED_KERNELSPEC['name']!r}")
+    return issues
+
+
+def _fix_notebook_toplevel(nb: dict) -> tuple[collections.OrderedDict, int]:
+    """Rebuild top-level structure to match Workspace format. Returns (fixed, fix_count)."""
+    fixes = 0
+    metadata = nb.get("metadata", {})
+
+    if nb.get("nbformat_minor") != EXPECTED_NBFORMAT_MINOR:
+        fixes += 1
+    if nb.get("nbformat") != EXPECTED_NBFORMAT:
+        fixes += 1
+    if metadata.get("kernelspec", {}).get("name") != EXPECTED_KERNELSPEC["name"]:
+        metadata["kernelspec"] = dict(EXPECTED_KERNELSPEC)
+        fixes += 1
+
+    rebuilt = collections.OrderedDict()
+    rebuilt["metadata"] = metadata
+    rebuilt["nbformat_minor"] = EXPECTED_NBFORMAT_MINOR
+    rebuilt["nbformat"] = EXPECTED_NBFORMAT
+    rebuilt["cells"] = nb.get("cells", [])
+    return rebuilt, fixes
+
+
 def validate_notebook(path: Path, fix: bool = False) -> list[str]:
     """Validate a single notebook file. Returns list of issues found."""
     try:
@@ -126,17 +166,22 @@ def validate_notebook(path: Path, fix: bool = False) -> list[str]:
     all_issues: list[str] = []
     total_fixes = 0
 
+    top_issues = _issues_for_notebook(nb)
+    all_issues.extend(top_issues)
+
     for idx, cell in enumerate(nb["cells"]):
         issues = _issues_for_cell(idx, cell)
         all_issues.extend(issues)
         if fix and issues:
             total_fixes += _fix_cell(cell)
 
-    if fix and total_fixes > 0:
+    if fix and all_issues:
+        rebuilt, top_fixes = _fix_notebook_toplevel(nb)
+        total_fixes += top_fixes
         with open(path, "w") as f:
-            json.dump(nb, f, indent=2, ensure_ascii=False, sort_keys=True)
+            json.dump(rebuilt, f, indent=2, ensure_ascii=False)
             f.write("\n")
-        print(f"  FIXED {path}: {total_fixes} fix(es) applied across {len(nb['cells'])} cells")
+        print(f"  FIXED {path}: {total_fixes} fix(es) applied across {len(rebuilt['cells'])} cells")
     elif all_issues:
         print(f"  FAIL  {path}: {len(all_issues)} issue(s)")
     else:
