@@ -358,6 +358,38 @@ extra_dependencies:
   - "org.slf4j:slf4j-nop:1.7.36"   # Silences SLF4J 1.x StaticLoggerBinder warning
 ```
 
+### Adding Extra Java/Scala Dependencies
+
+To use additional Java or Scala libraries in your `%%scala` cells, add their
+Maven coordinates to the `extra_dependencies` list in `scala_packages.yaml`:
+
+```yaml
+extra_dependencies:
+  - "org.slf4j:slf4j-nop:1.7.36"
+  - "com.google.guava:guava:33.0.0-jre"
+  - "org.apache.commons:commons-math3:3.6.1"
+```
+
+Then re-run the setup script:
+
+```python
+!bash setup_scala_environment.sh
+```
+
+Coursier resolves each artifact and its transitive dependencies from Maven
+Central and adds them to the JVM classpath. They become available in
+`%%scala` cells after calling `setup_scala_environment()`.
+
+**Format:** `"<groupId>:<artifactId>:<version>"` -- standard Maven
+coordinates. You can find these on [Maven Central](https://search.maven.org/)
+or the library's documentation.
+
+**Important:** There is no runtime `import $ivy` support. All dependencies
+must be declared in the YAML and resolved at install time, because the JVM
+classpath is fixed once `jpype.startJVM()` is called. If you add dependencies
+after the JVM has already started in the current session, you must restart
+the container (not just the kernel) for the new JARs to take effect.
+
 ### JVM Heap Sizing
 
 The `jvm_heap` setting controls the maximum JVM heap (`-Xmx`):
