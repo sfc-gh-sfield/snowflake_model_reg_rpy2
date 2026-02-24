@@ -1253,12 +1253,20 @@ def _is_snowpark_python_df(obj) -> bool:
 
 
 def _is_pyspark_df(obj) -> bool:
-    """Check if *obj* is a PySpark DataFrame."""
+    """Check if *obj* is a PySpark DataFrame (classic or Connect variant)."""
     try:
         from pyspark.sql import DataFrame as PySparkDF
-        return isinstance(obj, PySparkDF)
+        if isinstance(obj, PySparkDF):
+            return True
     except ImportError:
-        return False
+        pass
+    try:
+        from pyspark.sql.connect.dataframe import DataFrame as ConnectDF
+        if isinstance(obj, ConnectDF):
+            return True
+    except ImportError:
+        pass
+    return False
 
 
 def _push_snowpark_df(name: str, df) -> bool:
