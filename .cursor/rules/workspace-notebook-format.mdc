@@ -1,0 +1,60 @@
+---
+description: Snowflake Workspace Notebook cell metadata requirements
+globs: "**/*.ipynb"
+alwaysApply: false
+---
+
+# Snowflake Workspace Notebook Format
+
+When editing `.ipynb` files that are used in Snowflake Workspace Notebooks,
+every cell MUST include the metadata fields that Workspace expects. Workspace
+will auto-add missing fields on open, causing spurious diffs and merge conflicts.
+
+## Required Cell Structure
+
+### Markdown cells
+
+```json
+{
+  "cell_type": "markdown",
+  "metadata": {
+    "codeCollapsed": true
+  },
+  "source": ["..."],
+  "id": "<uuid4>"
+}
+```
+
+### Code cells
+
+```json
+{
+  "cell_type": "code",
+  "metadata": {
+    "language": "python"
+  },
+  "source": ["..."],
+  "execution_count": null,
+  "outputs": [],
+  "id": "<uuid4>"
+}
+```
+
+## Rules
+
+1. **Every cell must have an `"id"` field** — a UUID4 string (generate one per cell).
+2. **Markdown cells** must have `"metadata": {"codeCollapsed": true}`.
+3. **Code cells** must have `"metadata": {"language": "python"}`.
+4. **Code cells** must include `"execution_count": null` and `"outputs": []`.
+5. **Before editing** a Workspace notebook, always pull the latest version pushed
+   from Workspace first — it is the source of truth for metadata.
+6. **Never strip or overwrite** existing cell `id` values or metadata fields.
+
+## Markdown Content Rules
+
+7. **No HTML anchor tags** in markdown cells — `<a id="..."></a>` renders as
+   visible text in Workspace. Use plain `## N. Section Title` headings instead.
+8. **No `---` horizontal rules** at the start of markdown cells — they render
+   incorrectly as section separators in Workspace.
+9. Keep markdown cells simple: headings, paragraphs, lists, tables, and inline
+   formatting only. Avoid raw HTML.
