@@ -134,7 +134,7 @@ def validate_notebook(path: Path, fix: bool = False) -> list[str]:
 
     if fix and total_fixes > 0:
         with open(path, "w") as f:
-            json.dump(nb, f, indent=1, ensure_ascii=False)
+            json.dump(nb, f, indent=2, ensure_ascii=False, sort_keys=True)
             f.write("\n")
         print(f"  FIXED {path}: {total_fixes} fix(es) applied across {len(nb['cells'])} cells")
     elif all_issues:
