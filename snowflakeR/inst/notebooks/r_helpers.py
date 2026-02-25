@@ -134,12 +134,10 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
     # Register magic if requested
     if register_magic and result['rpy2_installed']:
         try:
-            from rpy2.ipython import rmagic
             ip = get_ipython()
-            ip.register_magics(rmagic.RMagics)
+            ip.register_magics(_build_safe_r_magics_class())
             result['magic_registered'] = True
         except NameError:
-            # Not in IPython/Jupyter
             result['errors'].append("Not in IPython environment, cannot register magic")
         except Exception as e:
             result['errors'].append(f"Failed to register magic: {e}")
@@ -162,6 +160,63 @@ def setup_r_environment(install_rpy2: bool = True, register_magic: bool = True) 
     
     result['success'] = len(result['errors']) == 0
     return result
+
+
+class RMagicExecutionError(Exception):
+    """Raised when a %%R cell encounters an R error.
+
+    Ensures Jupyter's "Run All" stops on the first failing R cell,
+    matching the behaviour of %%scala / %%java MagicExecutionError.
+    """
+    pass
+
+
+def _build_safe_r_magics_class():
+    """Build and return an RMagics subclass with error propagation.
+
+    The returned class wraps rpy2's ``%%R`` magic so that R errors
+    always raise a Python exception (``RMagicExecutionError``).
+    Older rpy2 versions print the error but silently swallow it,
+    which causes "Run All" in Workspace Notebooks to continue past
+    failing cells.  This wrapper guarantees propagation regardless
+    of rpy2 version.
+
+    It also adds a ``--time`` flag (prints wall-clock seconds)
+    for consistency with the ``%%scala`` / ``%%java`` magics.
+    """
+    import time
+    import IPython.core.magic
+    from rpy2.ipython.rmagic import RMagics, RInterpreterError
+
+    @IPython.core.magic.magics_class
+    class SafeRMagics(RMagics):
+
+        @IPython.core.magic.needs_local_scope
+        @IPython.core.magic.line_cell_magic
+        @IPython.core.magic.no_var_expand
+        def R(self, line, cell=None, local_ns=None):
+            show_time = False
+            if cell is not None:
+                parts = line.split()
+                if "--time" in parts:
+                    show_time = True
+                    parts.remove("--time")
+                    line = " ".join(parts)
+
+            t0 = time.time()
+            try:
+                result = super().R(line, cell=cell, local_ns=local_ns)
+                if show_time:
+                    print(f"[R executed in {time.time() - t0:.2f}s]")
+                return result
+            except RInterpreterError as e:
+                if show_time:
+                    print(f"[R failed after {time.time() - t0:.2f}s]")
+                msg = str(e.err) if hasattr(e, 'err') and e.err else str(e)
+                print(msg, file=sys.stderr)
+                raise RMagicExecutionError(msg) from e
+
+    return SafeRMagics
 
 
 # TODO: Replace per-function output workarounds (rprint, rview, rcat) with
