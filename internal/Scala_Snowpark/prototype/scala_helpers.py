@@ -2335,17 +2335,29 @@ def enable_udf_registration(stage: str = "@~/scala_udfs") -> Tuple[bool, str]:
 
     parts = [f"REPL class directory registered: {repl_class_dir}"]
 
-    # Also register the Snowpark JAR itself (Snowpark usually auto-detects,
-    # but being explicit avoids issues in the REPL context)
-    jar_dir = _scala_state.get("metadata", {}).get("jar_dir", DEFAULT_JAR_DIR)
+    # Register Snowpark + JDBC driver JARs as dependencies.
+    # The REPL classloader doesn't expose these to the UDF serializer,
+    # so Snowpark can't auto-detect them.  Without the JDBC JAR the
+    # server-side UDF deserialization fails with
+    # NoClassDefFoundError: net/snowflake/client/util/SecretDetector.
+    _UDF_JAR_KEYWORDS = ("snowpark", "snowflake-jdbc")
     snowpark_cp_file = _scala_state.get("metadata", {}).get("snowpark_classpath_file", "")
+    added_jars = []
     if snowpark_cp_file and os.path.isfile(snowpark_cp_file):
         with open(snowpark_cp_file) as f:
             for jar_path in f.read().strip().split(":"):
                 jar_path = jar_path.strip()
-                if jar_path and os.path.isfile(jar_path) and "snowpark" in jar_path.lower():
+                if not jar_path or not os.path.isfile(jar_path):
+                    continue
+                basename = os.path.basename(jar_path).lower()
+                if any(kw in basename for kw in _UDF_JAR_KEYWORDS):
                     add_code = f'sfSession.addDependency("{jar_path}")'
-                    execute_scala(add_code)
+                    ok, _, _ = execute_scala(add_code)
+                    if ok:
+                        added_jars.append(os.path.basename(jar_path))
+
+    if added_jars:
+        parts.append(f"Dependencies added: {', '.join(added_jars)}")
 
     parts.append(
         "UDF registration enabled. You can now use:\n"
