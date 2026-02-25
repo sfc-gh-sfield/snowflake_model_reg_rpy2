@@ -1474,7 +1474,13 @@ def _register_java_udf_impl(
     # --- Primary path: execute via javaSession in JShell ---
     jshell = _java_state.get("jshell")
     if jshell is not None:
-        escaped = create_sql.replace('\\', '\\\\').replace('"', '\\"')
+        escaped = (
+            create_sql
+            .replace('\\', '\\\\')
+            .replace('"', '\\"')
+            .replace('\n', '\\n')
+            .replace('\r', '')
+        )
         java_code = f'javaSession.sql("{escaped}").collect();'
         success, output, errors = _execute_jshell(java_code)
         if success:
