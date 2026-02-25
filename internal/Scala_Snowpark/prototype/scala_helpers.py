@@ -736,6 +736,7 @@ def _execute_jshell(code: str) -> Tuple[bool, str, str]:
 
     Snippet = jpype.JClass("jdk.jshell.Snippet")
     Status = Snippet.Status
+    Kind = Snippet.Kind
     sca = jshell.sourceCodeAnalysis()
     Completeness = jpype.JClass(
         "jdk.jshell.SourceCodeAnalysis$Completeness"
@@ -775,11 +776,15 @@ def _execute_jshell(code: str) -> Tuple[bool, str, str]:
             for event in events:
                 status = event.status()
                 if status == Status.VALID:
-                    val = event.value()
-                    if val is not None:
-                        val_str = str(val).strip()
-                        if val_str:
-                            value_parts.append(val_str)
+                    snippet = event.snippet()
+                    # Only show return values for standalone expressions,
+                    # not for variable declarations, imports, methods, etc.
+                    if snippet is not None and snippet.kind() == Kind.EXPRESSION:
+                        val = event.value()
+                        if val is not None:
+                            val_str = str(val).strip()
+                            if val_str:
+                                value_parts.append(val_str)
                 elif status == Status.REJECTED:
                     all_ok = False
                     diag_iter = jshell.diagnostics(event.snippet()).iterator()
@@ -1187,20 +1192,22 @@ def _push_snowpark_df_to_java(name: str, df) -> bool:
 
 
 def _is_snowpark_java_df_by_name(name: str) -> bool:
-    """Check whether *name* in JShell references a Snowpark Java DataFrame."""
+    """Check whether *name* in JShell references a Snowpark Java DataFrame.
+
+    Uses ``instanceof`` via JShell eval for robustness — works regardless
+    of whether the user imported with a wildcard or used the fully qualified
+    class name.
+    """
     jshell = _java_state.get("jshell")
     if jshell is None:
         return False
     try:
-        import jpype
-        snippets = jshell.snippets().iterator()
-        VarSnippet = jpype.JClass("jdk.jshell.VarSnippet")
-        while snippets.hasNext():
-            s = snippets.next()
-            if isinstance(s, VarSnippet) and str(s.name()) == name:
-                type_name = str(s.typeName())
-                if "snowpark_java" in type_name and "DataFrame" in type_name:
-                    return True
+        check_code = f"{name} instanceof com.snowflake.snowpark_java.DataFrame"
+        events = jshell.eval(check_code)
+        for event in events:
+            val = event.value()
+            if val is not None and str(val).strip() == "true":
+                return True
         return False
     except Exception:
         return False
