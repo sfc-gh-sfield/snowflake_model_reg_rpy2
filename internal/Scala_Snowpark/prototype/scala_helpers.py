@@ -307,6 +307,12 @@ def setup_scala_environment(
         except Exception as e:
             result["errors"].append(f"Failed to register %%java magic: {e}")
 
+        # Also register %%java_udf / %register_java_udf
+        try:
+            _register_java_udf_magics()
+        except Exception as e:
+            result["errors"].append(f"Failed to register Java UDF magics: {e}")
+
     result["spark_connect_enabled"] = metadata.get("spark_connect_enabled", False)
     result["success"] = len(result["errors"]) == 0
     return result
@@ -1373,6 +1379,299 @@ def _register_java_magic() -> None:
             print(errors, file=sys.stderr)
 
     _java_state["magic_registered"] = True
+
+
+# =============================================================================
+# Java UDF Registration (%%java_udf / %register_java_udf)
+# =============================================================================
+
+def _get_jshell_class_source(class_name: str) -> Optional[str]:
+    """Extract a class's source from JShell's snippet history.
+
+    JShell stores every evaluated snippet.  This walks the history
+    looking for ``TypeDeclSnippet`` entries whose name matches
+    *class_name* and returns the source of the **last** matching
+    definition (so redefinitions are handled correctly).
+    """
+    import jpype
+
+    jshell = _java_state.get("jshell")
+    if jshell is None:
+        return None
+
+    TypeDeclSnippet = jpype.JClass(
+        "jdk.jshell.TypeDeclSnippet"
+    )
+    it = jshell.snippets().iterator()
+    source = None
+    while it.hasNext():
+        snippet = it.next()
+        if isinstance(snippet, TypeDeclSnippet):
+            if str(snippet.name()) == class_name:
+                source = str(snippet.source())
+    return source
+
+
+def _parse_udf_args_string(args_str: str):
+    """Parse ``'x INT, y VARCHAR'`` into list of (name, type) tuples."""
+    result = []
+    for part in args_str.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        tokens = part.split(None, 1)
+        if len(tokens) == 2:
+            result.append((tokens[0], tokens[1]))
+        else:
+            result.append((tokens[0], tokens[0]))
+    return result
+
+
+def _register_java_udf_impl(
+    name: str,
+    args_str: str,
+    returns: str,
+    handler: str,
+    body: str,
+    *,
+    temporary: bool = True,
+    replace: bool = True,
+) -> Tuple[bool, str]:
+    """Register a Java UDF using the Snowflake Python API or SQL.
+
+    Tries ``snowflake.core`` first for clean API usage, falls back
+    to raw ``CREATE FUNCTION`` SQL.
+
+    Args:
+        name: UDF name in Snowflake
+        args_str: Argument list, e.g. ``"x INT, y VARCHAR"``
+        returns: Return type, e.g. ``"INT"``
+        handler: ``ClassName.methodName``
+        body: Java handler source code
+        temporary: Create as TEMPORARY (default True)
+        replace: Use OR REPLACE (default True)
+
+    Returns:
+        (success, message)
+    """
+    from snowflake.snowpark.context import get_active_session
+    try:
+        session = get_active_session()
+    except Exception:
+        return False, "No active Snowpark session found."
+
+    # --- Try snowflake.core first ---
+    try:
+        from snowflake.core import Root
+        from snowflake.core.user_defined_function import (
+            Argument,
+            JavaFunction,
+            ReturnDataType,
+            UserDefinedFunction,
+        )
+
+        parsed = _parse_udf_args_string(args_str)
+        udf_args = [
+            Argument(name=n, datatype=t) for n, t in parsed
+        ]
+
+        udf_obj = UserDefinedFunction(
+            name=name,
+            arguments=udf_args,
+            return_type=ReturnDataType(datatype=returns),
+            language_config=JavaFunction(
+                handler=handler,
+                runtime_version="17",
+            ),
+            body=body,
+            is_temporary=temporary,
+        )
+
+        root = Root(session)
+        db = session.get_current_database()
+        schema = session.get_current_schema()
+        if db and schema:
+            db = db.strip('"')
+            schema = schema.strip('"')
+            coll = (
+                root.databases[db]
+                .schemas[schema]
+                .user_defined_functions
+            )
+            mode = "or_replace" if replace else "fail"
+            coll.create(udf_obj, mode=mode)
+            return True, f"UDF '{name}' registered via Python API"
+
+    except ImportError:
+        pass
+    except Exception as e:
+        # Fall through to SQL approach
+        pass
+
+    # --- Fallback: raw SQL ---
+    try:
+        kind = "TEMPORARY " if temporary else ""
+        or_replace = "OR REPLACE " if replace else ""
+        sql = (
+            f"CREATE {or_replace}{kind}"
+            f"FUNCTION {name}({args_str}) "
+            f"RETURNS {returns} "
+            f"LANGUAGE JAVA "
+            f"RUNTIME_VERSION = '17' "
+            f"HANDLER = '{handler}' "
+            f"AS $$ {body} $$"
+        )
+        session.sql(sql).collect()
+        return True, f"UDF '{name}' registered via SQL"
+    except Exception as e:
+        return False, f"UDF registration failed: {e}"
+
+
+def _register_java_udf_magics() -> None:
+    """Register ``%%java_udf`` and ``%register_java_udf`` magics."""
+    try:
+        get_ipython()  # type: ignore[name-defined]
+    except NameError:
+        return
+
+    import argparse
+    import shlex
+    from IPython.core.magic import (
+        register_cell_magic,
+        register_line_magic,
+    )
+
+    def _build_parser():
+        p = argparse.ArgumentParser(prog="java_udf")
+        p.add_argument("--name", required=True)
+        p.add_argument("--args", required=True)
+        p.add_argument("--returns", required=True)
+        p.add_argument("--handler", required=True)
+        p.add_argument(
+            "--permanent", action="store_true",
+            default=False,
+        )
+        return p
+
+    @register_cell_magic
+    def java_udf(line, cell):
+        """Execute Java code in JShell then register a UDF.
+
+        Compiles and runs the cell in JShell (so you can test
+        locally), then extracts the handler class source from
+        JShell's snippet history and registers it as a UDF.
+
+        Usage::
+
+            %%java_udf --name double_it --args "x INT" \\
+                       --returns INT --handler Handler.compute
+            class Handler {
+                public static int compute(int x) {
+                    return x * 2;
+                }
+            }
+            System.out.println(Handler.compute(21));
+        """
+        import time
+
+        parser = _build_parser()
+        try:
+            opts = parser.parse_args(shlex.split(line))
+        except SystemExit:
+            print(
+                "Usage: %%java_udf --name NAME "
+                '--args "ARGS" --returns TYPE '
+                "--handler Class.method",
+                file=sys.stderr,
+            )
+            return
+
+        # Step 1: Execute in JShell
+        t0 = time.time()
+        success, output, errors = execute_java(cell)
+        elapsed = time.time() - t0
+
+        if output:
+            print(output)
+        print(f"[JShell executed in {elapsed:.2f}s]")
+
+        if not success:
+            msg = (
+                errors
+                or "Java execution failed"
+            )
+            print(msg, file=sys.stderr)
+            raise MagicExecutionError(msg)
+        if errors:
+            print(errors, file=sys.stderr)
+
+        # Step 2: Extract handler class source
+        handler_class = opts.handler.split(".")[0]
+        source = _get_jshell_class_source(handler_class)
+        if not source:
+            raise MagicExecutionError(
+                f"Class '{handler_class}' not found in "
+                "JShell snippet history"
+            )
+
+        # Step 3: Register
+        ok, msg = _register_java_udf_impl(
+            name=opts.name,
+            args_str=opts.args,
+            returns=opts.returns,
+            handler=opts.handler,
+            body=source,
+            temporary=not opts.permanent,
+        )
+        if ok:
+            print(msg)
+        else:
+            raise MagicExecutionError(msg)
+
+    @register_line_magic
+    def register_java_udf(line):
+        """Register a previously-defined JShell class as a UDF.
+
+        Usage::
+
+            %register_java_udf --name double_it --args "x INT" \\
+                               --returns INT --handler Handler.compute
+        """
+        parser = _build_parser()
+        try:
+            opts = parser.parse_args(shlex.split(line))
+        except SystemExit:
+            print(
+                "Usage: %register_java_udf --name NAME "
+                '--args "ARGS" --returns TYPE '
+                "--handler Class.method",
+                file=sys.stderr,
+            )
+            return
+
+        handler_class = opts.handler.split(".")[0]
+        source = _get_jshell_class_source(handler_class)
+        if not source:
+            raise MagicExecutionError(
+                f"Class '{handler_class}' not found in "
+                "JShell snippet history. Define it in a "
+                "%%java cell first."
+            )
+
+        ok, msg = _register_java_udf_impl(
+            name=opts.name,
+            args_str=opts.args,
+            returns=opts.returns,
+            handler=opts.handler,
+            body=source,
+            temporary=not opts.permanent,
+        )
+        if ok:
+            print(msg)
+        else:
+            raise MagicExecutionError(msg)
+
+    _java_state["udf_magic_registered"] = True
 
 
 # =============================================================================
