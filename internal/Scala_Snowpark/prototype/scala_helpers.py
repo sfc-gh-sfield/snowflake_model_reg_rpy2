@@ -1437,10 +1437,15 @@ def _register_java_udf_impl(
     temporary: bool = True,
     replace: bool = True,
 ) -> Tuple[bool, str]:
-    """Register a Java UDF using the Snowflake Python API or SQL.
+    """Register a Java UDF via javaSession in JShell (preferred) or Python.
 
-    Tries ``snowflake.core`` first for clean API usage, falls back
-    to raw ``CREATE FUNCTION`` SQL.
+    Primary path: executes ``CREATE FUNCTION`` through the JShell
+    ``javaSession`` so that temporary UDFs are visible when called
+    from ``%%java`` cells (temporary objects are session-scoped and
+    the Java session uses a separate JDBC connection).
+
+    Fallback: uses the Python Snowpark session (only reliable for
+    permanent UDFs that are visible across sessions).
 
     Args:
         name: UDF name in Snowflake
@@ -1454,75 +1459,44 @@ def _register_java_udf_impl(
     Returns:
         (success, message)
     """
+    kind = "TEMPORARY " if temporary else ""
+    or_replace = "OR REPLACE " if replace else ""
+    create_sql = (
+        f"CREATE {or_replace}{kind}"
+        f"FUNCTION {name}({args_str}) "
+        f"RETURNS {returns} "
+        f"LANGUAGE JAVA "
+        f"RUNTIME_VERSION = '17' "
+        f"HANDLER = '{handler}' "
+        f"AS $$ {body} $$"
+    )
+
+    # --- Primary path: execute via javaSession in JShell ---
+    jshell = _java_state.get("jshell")
+    if jshell is not None:
+        escaped = create_sql.replace('\\', '\\\\').replace('"', '\\"')
+        java_code = f'javaSession.sql("{escaped}").collect();'
+        success, output, errors = _execute_jshell(java_code)
+        if success:
+            return True, f"UDF '{name}' registered via javaSession"
+        return False, f"UDF registration failed in javaSession: {errors}"
+
+    # --- Fallback: Python session (works for permanent UDFs) ---
     from snowflake.snowpark.context import get_active_session
     try:
         session = get_active_session()
     except Exception:
-        return False, "No active Snowpark session found."
+        return False, "No active Snowpark or Java session found."
 
-    # --- Try snowflake.core first ---
     try:
-        from snowflake.core import Root
-        from snowflake.core.user_defined_function import (
-            Argument,
-            JavaFunction,
-            ReturnDataType,
-            UserDefinedFunction,
-        )
-
-        parsed = _parse_udf_args_string(args_str)
-        udf_args = [
-            Argument(name=n, datatype=t) for n, t in parsed
-        ]
-
-        udf_obj = UserDefinedFunction(
-            name=name,
-            arguments=udf_args,
-            return_type=ReturnDataType(datatype=returns),
-            language_config=JavaFunction(
-                handler=handler,
-                runtime_version="17",
-            ),
-            body=body,
-            is_temporary=temporary,
-        )
-
-        root = Root(session)
-        db = session.get_current_database()
-        schema = session.get_current_schema()
-        if db and schema:
-            db = db.strip('"')
-            schema = schema.strip('"')
-            coll = (
-                root.databases[db]
-                .schemas[schema]
-                .user_defined_functions
+        session.sql(create_sql).collect()
+        note = ""
+        if temporary:
+            note = (
+                " (Warning: created in Python session — temporary UDFs "
+                "may not be visible from javaSession)"
             )
-            mode = "or_replace" if replace else "fail"
-            coll.create(udf_obj, mode=mode)
-            return True, f"UDF '{name}' registered via Python API"
-
-    except ImportError:
-        pass
-    except Exception as e:
-        # Fall through to SQL approach
-        pass
-
-    # --- Fallback: raw SQL ---
-    try:
-        kind = "TEMPORARY " if temporary else ""
-        or_replace = "OR REPLACE " if replace else ""
-        sql = (
-            f"CREATE {or_replace}{kind}"
-            f"FUNCTION {name}({args_str}) "
-            f"RETURNS {returns} "
-            f"LANGUAGE JAVA "
-            f"RUNTIME_VERSION = '17' "
-            f"HANDLER = '{handler}' "
-            f"AS $$ {body} $$"
-        )
-        session.sql(sql).collect()
-        return True, f"UDF '{name}' registered via SQL"
+        return True, f"UDF '{name}' registered via Python session{note}"
     except Exception as e:
         return False, f"UDF registration failed: {e}"
 
