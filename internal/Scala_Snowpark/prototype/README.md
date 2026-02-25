@@ -546,6 +546,14 @@ javaSession.sql("SELECT java_celsius_to_f(100.0) AS fahrenheit").show();
 > *"Unable to detect the location of the enclosing class"*.  The SQL inline
 > approach bypasses this entirely — the handler source is sent directly to
 > Snowflake's server-side Java runtime.
+>
+> **Note:** The Snowflake docs provide REPL/notebook UDF guidance
+> [only for Scala](https://docs.snowflake.com/en/developer-guide/snowpark/scala/quickstart-jupyter)
+> (IMain writes `.class` files to disk, which Snowpark can find).  There is
+> no equivalent "Setting Up JShell for Snowpark Java" page — the
+> [Java setup docs](https://docs.snowflake.com/en/developer-guide/snowpark/java/setup)
+> only cover IntelliJ / Maven.  The SQL inline approach documented here is
+> the workaround for this gap.
 
 ### Alternatives for managing UDFs/procedures
 
