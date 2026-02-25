@@ -208,6 +208,15 @@ Credentials are injected as **Java System properties** (not environment
 variables) because Java's `System.getenv()` caches the process environment at
 JVM startup, making later `os.environ` changes invisible to Scala.
 
+> **Security note:** No new credentials are created here. The prototype uses
+> the **same SPCS OAuth token** that the Workspace container already provides
+> to the Python Snowpark session at `/snowflake/session/token`. This token is
+> short-lived, auto-rotated by the container runtime, and scoped to the
+> notebook's role and session. `inject_session_credentials()` simply reads
+> this existing token and makes it available to the JVM via System properties
+> — the same in-process memory space. No secrets are written to disk or
+> transmitted over the network.
+
 Then we can create a Snowpark Scala session:
 
 ```scala
@@ -248,8 +257,9 @@ UDFs -- everything.
 
 ## Connecting to Snowflake with Snowpark Java
 
-The same credential injection works for Java. Create a Snowpark Java session
-in a `%%java` cell:
+The same credential injection works for Java — the identical SPCS OAuth token
+is used (see security note above). Create a Snowpark Java session in a
+`%%java` cell:
 
 ```java
 %%java
