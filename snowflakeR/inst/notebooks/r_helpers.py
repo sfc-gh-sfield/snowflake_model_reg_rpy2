@@ -172,17 +172,22 @@ class RMagicExecutionError(Exception):
 
 
 def _build_safe_r_magics_class():
-    """Build and return an RMagics subclass with error propagation.
+    """Build and return an RMagics subclass with improved behaviour.
 
-    The returned class wraps rpy2's ``%%R`` magic so that R errors
-    always raise a Python exception (``RMagicExecutionError``).
-    Older rpy2 versions print the error but silently swallow it,
-    which causes "Run All" in Workspace Notebooks to continue past
-    failing cells.  This wrapper guarantees propagation regardless
-    of rpy2 version.
+    Enhancements over stock rpy2 ``RMagics``:
 
-    It also adds a ``--time`` flag (prints wall-clock seconds)
-    for consistency with the ``%%scala`` / ``%%java`` magics.
+    1. **Error propagation** — R errors always raise
+       ``RMagicExecutionError`` so Jupyter "Run All" stops on failure.
+    2. **Buffered output** — all R console output (``print()``,
+       ``cat()``, ``message()``) is captured via rpy2's console
+       callback and emitted as a single ``print()`` call at the end
+       of the cell.  This eliminates the extra line-breaks that
+       Workspace Notebooks inject between separate
+       ``publish_display_data`` calls.  With buffered output enabled,
+       R's normal ``print()``/``cat()`` work cleanly without needing
+       the ``rprint``/``rcat`` helper wrappers.
+    3. **``--time``** — prints wall-clock execution time.
+    4. **``--silent``** — suppresses all R text output.
     """
     import time
     import IPython.core.magic
@@ -191,57 +196,98 @@ def _build_safe_r_magics_class():
     @IPython.core.magic.magics_class
     class SafeRMagics(RMagics):
 
+        def __init__(self, shell):
+            super().__init__(shell)
+            self._output_buf = []
+            self._buffered_mode = False
+
+        def write_console_regular(self, output):
+            """Intercept R console output during buffered mode."""
+            if self._buffered_mode:
+                self._output_buf.append(output)
+            else:
+                super().write_console_regular(output)
+
+        def flush(self):
+            """Return buffered output instead of Rstdout_cache.
+
+            During buffered mode, drains our buffer (so
+            ``RInterpreterError`` still gets context) and also
+            drains the parent cache (in case any output slipped
+            through to it directly).
+            """
+            if self._buffered_mode:
+                text = ''.join(self._output_buf)
+                self._output_buf.clear()
+                parent_text = super().flush()
+                return text + parent_text
+            return super().flush()
+
         @IPython.core.magic.needs_local_scope
         @IPython.core.magic.line_cell_magic
         @IPython.core.magic.no_var_expand
         def R(self, line, cell=None, local_ns=None):
             show_time = False
+            silent = False
+
             if cell is not None:
                 parts = line.split()
                 if "--time" in parts:
                     show_time = True
                     parts.remove("--time")
-                    line = " ".join(parts)
+                if "--silent" in parts:
+                    silent = True
+                    parts.remove("--silent")
+                line = " ".join(parts)
 
+            self._output_buf.clear()
+            self._buffered_mode = True
             t0 = time.time()
+
             try:
                 result = super().R(line, cell=cell, local_ns=local_ns)
+
+                remaining = ''.join(self._output_buf)
+                if remaining and not silent:
+                    print(remaining, end='')
+
                 if show_time:
-                    print(f"[R executed in {time.time() - t0:.2f}s]")
+                    elapsed = time.time() - t0
+                    print(f"[R executed in {elapsed:.2f}s]")
+
                 return result
+
             except RInterpreterError as e:
+                remaining = ''.join(self._output_buf)
+                if remaining:
+                    print(remaining, end='')
+
                 if show_time:
-                    print(f"[R failed after {time.time() - t0:.2f}s]")
+                    elapsed = time.time() - t0
+                    print(f"[R failed after {elapsed:.2f}s]")
+
                 msg = str(e.err) if hasattr(e, 'err') and e.err else str(e)
                 print(msg, file=sys.stderr)
                 raise RMagicExecutionError(msg) from e
 
+            finally:
+                self._buffered_mode = False
+                self._output_buf.clear()
+
     return SafeRMagics
 
-
-# TODO: Replace per-function output workarounds (rprint, rview, rcat) with
-# buffered capture at the %%R magic level.  The Scala/JPype prototype captures
-# all JVM output into a ByteArrayOutputStream and emits it as a single
-# print() call — no extra line breaks.  We can do the same for R by
-# installing a custom rpy2 console callback that buffers output:
-#
-#   import rpy2.rinterface_lib.callbacks as cb
-#   _buf = []
-#   def _buffered(s): _buf.append(s)
-#   # before cell: cb.consolewrite_print = _buffered; _buf.clear()
-#   # after cell:  cb.consolewrite_print = old; print("".join(_buf))
-#
-# This would make R's normal print()/cat() work cleanly in Workspace
-# Notebooks without needing wrapper functions.  See the Scala prototype
-# in internal/Scala_Snowpark/prototype/scala_helpers.py for the pattern.
-
 # R output helpers code - can be loaded independently of connection management
+#
+# NOTE: With the SafeRMagics buffered output (above), R's normal print()/cat()
+# should work cleanly in most cases.  These helpers are still loaded for
+# backward compatibility and for edge cases where explicit formatting control
+# is needed (e.g. rview with row limits, rglimpse for structure).
 R_OUTPUT_HELPERS_CODE = '''
 # =============================================================================
 # Output Helpers for Workspace Notebooks
 # =============================================================================
-# Workspace Notebooks add extra line breaks to R output.
-# These helpers produce cleaner formatting.
+# These helpers provide explicit formatting control.
+# With the buffered %%R magic, normal print()/cat() should also work cleanly.
 
 #' Print an object cleanly (workaround for Workspace Notebook rendering)
 #' 
