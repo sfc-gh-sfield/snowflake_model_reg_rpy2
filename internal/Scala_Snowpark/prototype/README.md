@@ -1,27 +1,25 @@
-# Scala & Java / Snowpark Prototype for Workspace Notebooks
+# Scala & Java for Snowflake Workspace Notebooks
 
-**Status:** Prototype / Proof of Concept — **Working** in Snowflake Workspace Notebooks
+**Status:** Working in Snowflake Workspace Notebooks
 **Date:** February 2026
-**See also:** `../FEASIBILITY.md`, `../OPTION_A_JPYPE_DEEP_DIVE.md`
 
 ---
 
 ## Overview
 
-This prototype enables **Scala execution**, **Java execution**,
+This toolkit enables **Scala execution**, **Java execution**,
 **Snowpark Scala**, **Snowpark Java**, and **Snowpark Connect for Scala**
 within Snowflake Workspace Notebooks using `%%scala` / `%%java` cell magics
-powered by JPype. It follows the same architectural pattern as the R/rpy2
-integration:
+powered by JPype.
 
-| Layer | R Solution | Scala / Java Solution (this prototype) |
-|-------|-----------|-------------------------------|
-| Runtime | R via micromamba | OpenJDK 17 + Scala 2.12 via micromamba |
-| Bridge | rpy2 (embeds R in Python) | JPype1 (embeds JVM in Python via JNI) |
-| Magic | `%%R` from rpy2 | `%%scala` / `%%java` (custom, in `scala_helpers.py`) |
-| REPL | R interpreter | Scala IMain (Ammonite-lite) + JShell (Java) |
-| Auth | ADBC + PAT | Snowpark Scala/Java + **SPCS OAuth token** |
-| Spark Connect | N/A | Snowpark Connect gRPC proxy (opt-in) |
+| Layer | Technology |
+|-------|-----------|
+| Runtime | OpenJDK 17 + Scala 2.12 via micromamba |
+| Bridge | JPype1 (embeds JVM in Python via JNI) |
+| Magic | `%%scala` / `%%java` (custom, in `scala_helpers.py`) |
+| REPL | Scala IMain (Ammonite-lite) + JShell (Java) |
+| Auth | Snowpark Scala/Java + **SPCS OAuth token** |
+| Spark Connect | Snowpark Connect gRPC proxy (opt-in) |
 
 **Three languages, one notebook:** Both `%%scala` and `%%java` magics share
 the same in-process JVM, classpath, and credential injection. When Spark
@@ -36,7 +34,7 @@ Connect is enabled, users additionally get `spark.sql(...)` in `%%scala` cells.
 ## File Structure
 
 ```
-prototype/
+snowflake-notebook-jvm/
 ├── README.md                              # This file (architecture & shared config)
 ├── README_SCALA.md                        # Scala-specific guide
 ├── README_JAVA.md                         # Java-specific guide
@@ -63,7 +61,7 @@ directory (alongside your `.ipynb` file).
 ```
 
 This installs (~30s, or ~2-4 minutes on first cold start):
-- **micromamba** (if not already present from R setup)
+- **micromamba** (if not already present)
 - **OpenJDK 17** via micromamba (~174MB, largest single download)
 - **coursier JAR launcher** (JVM dependency resolver, JAR-based to avoid GraalVM native image issues)
 - **Scala 2.12** compiler JARs via coursier
@@ -133,8 +131,7 @@ startup, making `os.environ` changes invisible to Scala after
 `jpype.startJVM()`. Scala reads them via `System.getProperty(key)`.
 
 For the Scala/Java Snowpark path, no PAT creation step is needed — the
-container's OAuth token is auto-detected and injected. (The R integration
-uses PATs for ADBC authentication, which also works inside SPCS.)
+container's OAuth token is auto-detected and injected.
 
 ### Outside Workspace (e.g. local Jupyter)
 
@@ -239,7 +236,7 @@ memory, `auto` will likely select 4 GB (the configured cap).
 
 ## Interpreter Modes
 
-The prototype supports three REPL backends:
+Three REPL backends are supported:
 
 | Mode | Language | Description | Notes |
 |------|----------|-------------|-------|
@@ -280,7 +277,7 @@ All components are open-source with permissive or standard licenses:
 
 ## Key Learnings
 
-Issues discovered and resolved during prototype development:
+Issues discovered and resolved during development:
 
 | Issue | Root Cause | Solution |
 |-------|-----------|----------|
@@ -301,7 +298,7 @@ Issues discovered and resolved during prototype development:
 
 ---
 
-## Known Limitations (Prototype)
+## Known Limitations
 
 | Limitation | Impact | Future Fix |
 |------------|--------|------------|
@@ -345,13 +342,8 @@ Issues discovered and resolved during prototype development:
 
 ---
 
-## Relationship to R Integration
+## Design Notes
 
-This prototype reuses infrastructure from the R integration:
-
-- **micromamba** — same installer, can coexist in the same container
-- **Authentication** — R uses ADBC with a PAT (created via `PATManager`),
-  Scala/Java use Snowpark JDBC with the SPCS OAuth token injected by the
-  container. The Scala/Java path is simpler since no PAT creation step is needed.
-- **PERSISTENT_DIR** — same persistence strategy applies
-- **Architecture pattern** — same "install runtime + bridge + magic" approach
+- **micromamba** — used to install the JVM and Scala toolchain inside the container
+- **Authentication** — Snowpark JDBC with the SPCS OAuth token injected by the container (no PAT creation needed)
+- **PERSISTENT_DIR** — caches installed runtimes and JARs across notebook restarts

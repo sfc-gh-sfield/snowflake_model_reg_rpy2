@@ -7,7 +7,7 @@
 
 ## %%scala Magic Flags
 
-The `%%scala` cell magic supports flags modelled on rpy2's `%%R`:
+The `%%scala` cell magic supports the following flags:
 
 | Flag | Description | Example |
 |------|-------------|---------|
@@ -277,7 +277,7 @@ sfSession.sql("SELECT double_it(42) AS result").show()
 ## Spark Connect for Scala (Opt-in)
 
 When `spark_connect.enabled: true` is set in `scala_packages.yaml`, the
-prototype also sets up **Snowpark Connect for Scala**, providing a native
+toolkit also sets up **Snowpark Connect for Scala**, providing a native
 Spark SQL experience alongside Snowpark Scala.
 
 ### Architecture
