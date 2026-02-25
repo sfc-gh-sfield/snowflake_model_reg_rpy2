@@ -2379,3 +2379,91 @@ def enable_udf_registration(stage: str = "@~/scala_udfs") -> Tuple[bool, str]:
     )
 
     return True, "\n".join(parts)
+
+
+def enable_udf_registration_java(
+    stage: str = "@~/java_udfs",
+) -> Tuple[bool, str]:
+    """Wire up dependencies so Snowpark Java can register UDFs / stored
+    procedures from ``%%java`` cells.
+
+    Snowpark Java's ``javaSession.udf().registerTemporary`` /
+    ``registerPermanent`` serialise the lambda and upload it to a stage.
+    In the JShell REPL context, Snowpark can't auto-detect its own JARs,
+    so we explicitly add the Snowpark and JDBC driver JARs via
+    ``javaSession.addDependency()``.
+
+    Args:
+        stage: Stage location for permanent UDFs
+            (default ``@~/java_udfs``).
+
+    Returns:
+        (success, message)
+
+    Example::
+
+        from scala_helpers import enable_udf_registration_java
+        enable_udf_registration_java()
+
+        # Then in a %%java cell:
+        # import com.snowflake.snowpark_java.types.*;
+        # var doubleUdf = com.snowflake.snowpark_java.Functions.udf(
+        #     (Integer x) -> x + x,
+        #     DataTypes.IntegerType, DataTypes.IntegerType);
+    """
+    jshell = _java_state.get("jshell")
+    if jshell is None:
+        return False, (
+            "No JShell interpreter initialized. "
+            "Call setup_scala_environment() first."
+        )
+
+    parts = []
+
+    # Register Snowpark + JDBC driver JARs as dependencies.
+    _UDF_JAR_KEYWORDS = ("snowpark", "snowflake-jdbc")
+    metadata = _scala_state.get("metadata", {})
+    snowpark_cp_file = metadata.get(
+        "snowpark_classpath_file", ""
+    )
+    added_jars = []
+    if snowpark_cp_file and os.path.isfile(snowpark_cp_file):
+        with open(snowpark_cp_file) as f:
+            for jar_path in f.read().strip().split(":"):
+                jar_path = jar_path.strip()
+                if (
+                    not jar_path
+                    or not os.path.isfile(jar_path)
+                ):
+                    continue
+                basename = os.path.basename(jar_path).lower()
+                if any(
+                    kw in basename
+                    for kw in _UDF_JAR_KEYWORDS
+                ):
+                    add_code = (
+                        f'javaSession.addDependency('
+                        f'"{jar_path}");'
+                    )
+                    ok, _, _ = execute_java(add_code)
+                    if ok:
+                        added_jars.append(
+                            os.path.basename(jar_path)
+                        )
+
+    if added_jars:
+        parts.append(
+            f"Dependencies added: {', '.join(added_jars)}"
+        )
+
+    parts.append(
+        "Java UDF registration enabled. You can now use:\n"
+        "  import com.snowflake.snowpark_java.types.*;\n"
+        "  var doubleUdf = com.snowflake.snowpark_java"
+        ".Functions.udf(\n"
+        "      (Integer x) -> x + x,\n"
+        "      DataTypes.IntegerType, "
+        "DataTypes.IntegerType);"
+    )
+
+    return True, "\n".join(parts)

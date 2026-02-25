@@ -492,6 +492,55 @@ sfSession.udf.registerPermanent(
 sfSession.sql("SELECT double_it(42) AS result").show()
 ```
 
+## UDF and Stored Procedure Registration (Java)
+
+Snowpark Java provides similar UDF registration APIs.  The main difference
+from Scala is that Java UDFs require **explicit data type declarations**
+for arguments and return values using `DataTypes`.
+
+### Enabling Java UDF support
+
+```python
+from scala_helpers import enable_udf_registration_java
+success, msg = enable_udf_registration_java()
+print(msg)
+```
+
+### Creating a temporary UDF (anonymous lambda)
+
+```java
+%%java
+import com.snowflake.snowpark_java.Functions;
+import com.snowflake.snowpark_java.types.DataTypes;
+import com.snowflake.snowpark_java.UserDefinedFunction;
+
+UserDefinedFunction doubleUdf = Functions.udf(
+    (Integer x) -> x * 2,
+    DataTypes.IntegerType,
+    DataTypes.IntegerType);
+
+var result = javaSession.sql("SELECT 21 AS val")
+    .withColumn("doubled", doubleUdf.apply(Functions.col("val")));
+result.show();
+```
+
+### Creating a permanent UDF
+
+```java
+%%java
+import com.snowflake.snowpark_java.types.DataTypes;
+
+javaSession.udf().registerPermanent(
+    "java_double_it",
+    (Integer x) -> x * 2,
+    DataTypes.IntegerType,
+    DataTypes.IntegerType,
+    "@~/java_udfs");
+
+// Call by name
+javaSession.sql("SELECT java_double_it(42) AS result").show();
+```
+
 ### Alternatives for managing UDFs/procedures
 
 If you need more advanced lifecycle management (versioning, deployment
