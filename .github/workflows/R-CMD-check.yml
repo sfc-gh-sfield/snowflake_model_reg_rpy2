@@ -52,11 +52,10 @@ jobs:
           pip install snowflake-ml-python snowflake-snowpark-python
 
       # Install R package dependencies (including Suggests except snowflakeauth)
-      # In the public repo, the package is at the repo root (not snowflakeR/)
       - name: Install R dependencies
         run: |
           install.packages(c("remotes", "rcmdcheck"))
-          remotes::install_deps(".", dependencies = TRUE)
+          remotes::install_deps("snowflakeR", dependencies = TRUE)
         shell: Rscript {0}
 
       # Point reticulate at the system Python (not a venv)
@@ -68,14 +67,14 @@ jobs:
       # Run the test suite
       - name: Run tests
         run: |
-          testthat::test_local(".", reporter = "summary")
+          testthat::test_local("snowflakeR", reporter = "summary")
         shell: Rscript {0}
 
       # Full R CMD check
       - name: R CMD check
         run: |
           rcmdcheck::rcmdcheck(
-            path = ".",
+            path = "snowflakeR",
             args = c("--no-manual", "--as-cran"),
             error_on = "error",
             check_dir = "check"
