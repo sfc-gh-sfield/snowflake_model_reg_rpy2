@@ -93,6 +93,6 @@ extra_dependencies:
 # This adds ~30s to install time and ~200MB of pip packages.
 
 spark_connect:
-  enabled: true
+  enabled: false
   pyspark_version: "3.5.6"
   server_port: 15002

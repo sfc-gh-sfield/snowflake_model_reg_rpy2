@@ -556,11 +556,12 @@ def _init_imain(metadata: Dict[str, Any]) -> None:
     settings = Settings()
     settings.usejavacp().tryToSetFromPropertyValue("true")
 
-    # Configure REPL class output directory for UDF support
+    # Configure REPL class output directory for UDF serialization
     repl_class_dir = os.path.join(
         metadata.get("jar_dir", DEFAULT_JAR_DIR), "replClasses"
     )
     os.makedirs(repl_class_dir, exist_ok=True)
+    settings.outputDirs().setSingleOutput(repl_class_dir)
 
     output_stream = ByteArrayOutputStream()
     print_writer = PrintWriter(output_stream, True)
@@ -2286,3 +2287,70 @@ def bootstrap_snowpark_scala(session) -> Tuple[bool, str]:
         return True, output
     else:
         return False, errors or output or "Session creation failed"
+
+
+def enable_udf_registration(stage: str = "@~/scala_udfs") -> Tuple[bool, str]:
+    """Wire up the REPL class output directory so Snowpark Scala can
+    serialise and register UDFs / stored procedures from ``%%scala`` cells.
+
+    Snowpark's ``session.udf.registerTemporary`` / ``registerPermanent``
+    serialise the lambda closure and upload it to a stage.  When running
+    inside a Scala REPL (IMain), the compiled class files live in a
+    temporary directory that Snowpark doesn't know about by default.
+    This function calls ``sfSession.addDependency()`` to register that
+    directory so UDF serialization works.
+
+    Args:
+        stage: Stage location for permanent UDFs (default ``@~/scala_udfs``).
+            Only used when the caller later calls ``registerPermanent``.
+            Temporary UDFs don't need a stage.
+
+    Returns:
+        (success, message)
+
+    Example::
+
+        from scala_helpers import enable_udf_registration
+        enable_udf_registration()
+
+        # Then in a %%scala cell:
+        # val doubleUdf = udf((x: Int) => x + x)
+        # sfSession.udf.registerPermanent("double_it", (x: Int) => x + x, "@~/scala_udfs")
+    """
+    repl_class_dir = _scala_state.get("_repl_class_dir")
+    if not repl_class_dir:
+        return False, "No REPL class directory found. Call setup_scala_environment() first."
+
+    if not os.path.isdir(repl_class_dir):
+        os.makedirs(repl_class_dir, exist_ok=True)
+
+    # Register the REPL class directory as a dependency
+    code = f'sfSession.addDependency("{repl_class_dir}")'
+    success, output, errors = execute_scala(code)
+    if not success:
+        return False, (
+            f"Failed to add REPL dependency: {errors or output}\n"
+            "Make sure sfSession exists (run bootstrap_snowpark_scala first)."
+        )
+
+    parts = [f"REPL class directory registered: {repl_class_dir}"]
+
+    # Also register the Snowpark JAR itself (Snowpark usually auto-detects,
+    # but being explicit avoids issues in the REPL context)
+    jar_dir = _scala_state.get("metadata", {}).get("jar_dir", DEFAULT_JAR_DIR)
+    snowpark_cp_file = _scala_state.get("metadata", {}).get("snowpark_classpath_file", "")
+    if snowpark_cp_file and os.path.isfile(snowpark_cp_file):
+        with open(snowpark_cp_file) as f:
+            for jar_path in f.read().strip().split(":"):
+                jar_path = jar_path.strip()
+                if jar_path and os.path.isfile(jar_path) and "snowpark" in jar_path.lower():
+                    add_code = f'sfSession.addDependency("{jar_path}")'
+                    execute_scala(add_code)
+
+    parts.append(
+        "UDF registration enabled. You can now use:\n"
+        "  val myUdf = udf((x: Int) => x + x)\n"
+        f'  sfSession.udf.registerPermanent("name", (x: Int) => x + x, "{stage}")'
+    )
+
+    return True, "\n".join(parts)
