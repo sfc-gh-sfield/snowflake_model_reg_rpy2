@@ -9,9 +9,9 @@ cross-language interoperability*
 > **Heads up:** The Scala & Java prototype described in this post is an
 > experimental project. It is **not officially supported by Snowflake**.
 > It demonstrates what's possible today within the existing building blocks
-> available in Workspace Notebooks and is shared to demonstrate the principle
-> and solicit feedback. APIs and behaviour may change. The full working
-> prototype is available on
+> available in Workspace Notebooks and is shared to demonstrate the principles
+> and as-is for those that may find it useful. APIs and behaviour may change. 
+> The full working prototype is available on
 > [GitHub](https://github.com/sfc-gh-sfield/snowflake-workspace-scala-prototype).
 
 ---
@@ -22,18 +22,18 @@ Python and SQL, but what if your team works in Scala or Java? Snowpark has
 first-class Scala and Java SDKs, and many data engineering teams prefer
 these languages for their type safety, performance, and expressiveness.
 
-In this post I'll show how to add both Scala and Java support to Workspace
-Notebooks -- including Snowpark Scala/Java for direct Snowflake operations,
-UDF registration from notebook cells, and optionally Spark Connect for the
-full Spark DataFrame API. By the end you'll be able to write `%%scala` and
-`%%java` cells in a Workspace Notebook, query Snowflake with
+In this post I'll show how you can easily add both Scala and Java support to
+Workspace Notebooks -- including Snowpark Scala/Java for direct Snowflake 
+operations, UDF registration from notebook cells, and optionally Spark Connect 
+for the full Spark DataFrame API. By the end you'll be able to write `%%scala` 
+and `%%java` cells in a Workspace Notebook, query Snowflake with
 `sfSession.sql(...)` or `javaSession.sql(...)`, register UDFs from real
 testable code, use the Spark DataFrame API via `spark.sql(...)`, and pass
 DataFrames seamlessly between Python, Scala, and Java.
 
 The full working prototype -- including the installer, helper module, and
-example notebooks -- is published as a self-contained repo you can clone into
-any Workspace.
+example notebooks -- is published as a self-contained repo that you can clone
+into any Workspace.
 
 ## The Approach: JPype as a JVM Bridge
 
@@ -56,24 +56,24 @@ Java code in notebook cells, and it executes natively with full access to
 Snowpark, the standard libraries, and any JARs on the classpath.
 
 ```
-┌──────────────────────────────────────────────────────────────┐
-│               Snowflake Workspace Notebook                   │
-│                                                              │
-│   Python Kernel                                              │
-│   ├── %%scala magic  ──►  JPype (JNI)  ──►  JVM             │
-│   │                                          ├── Scala REPL  │
-│   ├── %%java magic   ──►                     │   (IMain)     │
-│   │                                          ├── Java REPL   │
-│   │                                          │   (JShell)    │
-│   │                                          ├── Snowpark    │
-│   │                                          │   Scala+Java  │
-│   │                                          └── Spark       │
-│   │                                              Connect     │
-│   │                                              Client      │
-│   ├── Snowpark Python (direct)                               │
-│   └── snowpark_connect gRPC server (opt-in)                  │
-│        └──► Snowflake (SPCS OAuth)                           │
-└──────────────────────────────────────────────────────────────┘
+   ┌──────────────────────────────────────────────────────────────┐
+   │               Snowflake Workspace Notebook                   │
+   │                                                              │
+   │   Python Kernel                                              │
+   │   ├── %%scala magic  ──►  JPype (JNI)  ──►  JVM              │
+   │   │                                          ├── Scala REPL  │
+   │   ├── %%java magic   ──►                     │   (IMain)     │
+   │   │                                          ├── Java REPL   │
+   │   │                                          │   (JShell)    │
+   │   │                                          ├── Snowpark    │
+   │   │                                          │   Scala+Java  │
+   │   │                                          └── Spark       │
+   │   │                                              Connect     │
+   │   │                                              Client      │
+   │   ├── Snowpark Python (direct)                               │
+   │   └── snowpark_connect gRPC server (opt-in)                  │
+   │        └──► Snowflake (SPCS OAuth)                           │
+   └──────────────────────────────────────────────────────────────┘
 ```
 
 The key components:
@@ -81,7 +81,7 @@ The key components:
 | Layer | What |
 |-------|------|
 | Runtime | OpenJDK 17 + Scala 2.12, installed via micromamba |
-| Bridge | JPype1 -- embeds JVM in the Python process via JNI |
+| Bridge | JPype -- embeds JVM in the Python process via JNI |
 | Magics | `%%scala` / `%%java` -- custom IPython magics in `scala_helpers.py` |
 | REPLs | Scala IMain (Ammonite-lite) + JDK 17 JShell |
 | Auth | SPCS OAuth token (auto-detected from the Workspace container) |
@@ -115,7 +115,7 @@ restart) are faster. It installs:
 - **Scala 2.12** compiler and library JARs
 - **Ammonite** REPL JARs
 - **Snowpark 1.18.0** and all transitive dependencies
-- **JPype1** into the kernel's Python environment
+- **JPype** (`pip install JPype1`) into the kernel's Python environment
 - **(If Spark Connect enabled - optional):** `snowpark-connect`, `pyspark`,
   `opentelemetry-exporter-otlp`, and the Spark Connect client JARs
 
