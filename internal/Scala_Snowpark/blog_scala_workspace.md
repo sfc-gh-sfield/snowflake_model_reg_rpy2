@@ -106,7 +106,7 @@ workspace_java_quickstart.ipynb   # Java example notebook
 ```
 
 The script is **idempotent** -- it detects what's already installed and skips
-those steps. First run takes 2-4 minutes; subsequent runs (e.g. after a kernel
+those steps. First run takes 1-2 minutes; subsequent runs (e.g. after a kernel
 restart) are faster. It installs:
 
 - **micromamba** -- lightweight conda-compatible package manager
@@ -194,8 +194,7 @@ inside a Snowflake Workspace Notebook.
 ## Connecting to Snowflake with Snowpark Scala
 
 Workspace Notebooks run inside SPCS containers, which provide an OAuth token
-at `/snowflake/session/token`. This is the simplest authentication path --
-no PAT, or other authentication method needed.
+at `/snowflake/session/token` limited to specific applications. This is the simplest authentication path -- no PAT, or other authentication method needed.
 
 ```python
 from snowflake.snowpark.context import get_active_session
@@ -233,6 +232,14 @@ val sfSession = Session.builder.configs(Map(
 )).create
 
 sfSession.sql("SELECT CURRENT_USER(), CURRENT_ROLE()").show()
+```
+
+Or use the convenience helper that does this in a single call:
+
+```python
+from scala_helpers import bootstrap_snowpark_scala
+success, msg = bootstrap_snowpark_scala(session)
+print(msg)
 ```
 
 You now have a full Snowpark Scala session. All the Snowpark Scala APIs work:
