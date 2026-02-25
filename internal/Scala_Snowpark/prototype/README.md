@@ -508,13 +508,17 @@ print(msg)
 
 ### Creating a temporary UDF (anonymous lambda)
 
+> **Note:** `Functions.udf(...)` requires a "default session" which isn't set
+> in the JShell REPL context.  Always use `javaSession.udf().registerTemporary()`
+> instead.
+
 ```java
 %%java
 import com.snowflake.snowpark_java.Functions;
 import com.snowflake.snowpark_java.types.DataTypes;
 import com.snowflake.snowpark_java.UserDefinedFunction;
 
-UserDefinedFunction doubleUdf = Functions.udf(
+UserDefinedFunction doubleUdf = javaSession.udf().registerTemporary(
     (Integer x) -> x * 2,
     DataTypes.IntegerType,
     DataTypes.IntegerType);

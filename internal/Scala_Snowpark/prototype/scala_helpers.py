@@ -2407,7 +2407,7 @@ def enable_udf_registration_java(
 
         # Then in a %%java cell:
         # import com.snowflake.snowpark_java.types.*;
-        # var doubleUdf = com.snowflake.snowpark_java.Functions.udf(
+        # var doubleUdf = javaSession.udf().registerTemporary(
         #     (Integer x) -> x + x,
         #     DataTypes.IntegerType, DataTypes.IntegerType);
     """
@@ -2459,8 +2459,8 @@ def enable_udf_registration_java(
     parts.append(
         "Java UDF registration enabled. You can now use:\n"
         "  import com.snowflake.snowpark_java.types.*;\n"
-        "  var doubleUdf = com.snowflake.snowpark_java"
-        ".Functions.udf(\n"
+        "  var doubleUdf = javaSession.udf()"
+        ".registerTemporary(\n"
         "      (Integer x) -> x + x,\n"
         "      DataTypes.IntegerType, "
         "DataTypes.IntegerType);"
