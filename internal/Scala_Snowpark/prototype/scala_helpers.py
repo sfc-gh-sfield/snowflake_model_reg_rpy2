@@ -752,7 +752,8 @@ def _execute_jshell(code: str) -> Tuple[bool, str, str]:
                         value_parts.append(val_str)
             elif status == Status.REJECTED:
                 all_ok = False
-                diag_iter = jshell.diagnostics(event.snippet())
+                diag_stream = jshell.diagnostics(event.snippet())
+                diag_iter = diag_stream.iterator()
                 while diag_iter.hasNext():
                     d = diag_iter.next()
                     error_parts.append(str(d.getMessage(None)))
@@ -1156,7 +1157,7 @@ def _is_snowpark_java_df_by_name(name: str) -> bool:
         return False
     try:
         import jpype
-        snippets = jshell.snippets()
+        snippets = jshell.snippets().iterator()
         VarSnippet = jpype.JClass("jdk.jshell.VarSnippet")
         while snippets.hasNext():
             s = snippets.next()
@@ -1211,7 +1212,7 @@ def _pull_from_jshell(name: str) -> Optional[Any]:
         import jpype
         VarSnippet = jpype.JClass("jdk.jshell.VarSnippet")
         Snippet = jpype.JClass("jdk.jshell.Snippet")
-        snippets = jshell.snippets()
+        snippets = jshell.snippets().iterator()
         target = None
         while snippets.hasNext():
             s = snippets.next()
