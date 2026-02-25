@@ -556,6 +556,19 @@ def _init_imain(metadata: Dict[str, Any]) -> None:
     settings = Settings()
     settings.usejavacp().tryToSetFromPropertyValue("true")
 
+    # Wrap REPL code in classes (not objects) so that lambdas defined
+    # in the REPL can be serialized for UDF upload.
+    # See: docs.snowflake.com/.../quickstart-jupyter  step 3
+    try:
+        settings.YreplClassBased().tryToSetFromPropertyValue("true")
+    except Exception:
+        # Fall back to command-line-style flag if the setting accessor
+        # name differs across Scala versions
+        try:
+            settings.processArgumentString("-Yrepl-class-based")
+        except Exception:
+            pass
+
     # Configure REPL class output directory for UDF serialization
     repl_class_dir = os.path.join(
         metadata.get("jar_dir", DEFAULT_JAR_DIR), "replClasses"
