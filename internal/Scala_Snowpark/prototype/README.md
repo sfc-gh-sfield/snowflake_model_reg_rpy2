@@ -494,56 +494,58 @@ sfSession.sql("SELECT double_it(42) AS result").show()
 
 ## UDF and Stored Procedure Registration (Java)
 
-Snowpark Java provides similar UDF registration APIs.  The main difference
-from Scala is that Java UDFs require **explicit data type declarations**
-for arguments and return values using `DataTypes`.
+JShell keeps compiled classes **in memory** (unlike Scala's IMain which writes
+`.class` files to a configurable directory on disk).  This means Snowpark Java's
+`registerTemporary` / `registerPermanent` lambda serialization won't work from
+JShell — Snowpark can't locate the class files to package into a UDF JAR.
 
-### Enabling Java UDF support
+The solution is to use **SQL inline UDFs** via `javaSession.sql()`, which embeds
+the Java handler code directly in the `CREATE FUNCTION` statement.  This avoids
+the classpath/serialization problem entirely and works cleanly from JShell cells.
 
-```python
-from scala_helpers import enable_udf_registration_java
-success, msg = enable_udf_registration_java()
-print(msg)
-```
-
-### Creating a temporary UDF (anonymous lambda)
-
-> **Note:** `Functions.udf(...)` requires a "default session" which isn't set
-> in the JShell REPL context.  Always use `javaSession.udf().registerTemporary()`
-> instead.
+### Creating a temporary UDF (SQL inline handler)
 
 ```java
 %%java
-import com.snowflake.snowpark_java.Functions;
-import com.snowflake.snowpark_java.types.DataTypes;
-import com.snowflake.snowpark_java.UserDefinedFunction;
+javaSession.sql(
+    "CREATE OR REPLACE TEMPORARY FUNCTION java_double_it(x INT) " +
+    "RETURNS INT " +
+    "LANGUAGE JAVA " +
+    "RUNTIME_VERSION = '17' " +
+    "HANDLER = 'Handler.compute' " +
+    "AS 'class Handler { " +
+    "  public static int compute(int x) { return x * 2; } " +
+    "}'"
+).collect();
 
-UserDefinedFunction doubleUdf = javaSession.udf().registerTemporary(
-    (Integer x) -> x * 2,
-    DataTypes.IntegerType,
-    DataTypes.IntegerType);
-
-var result = javaSession.sql("SELECT 21 AS val")
-    .withColumn("doubled", doubleUdf.apply(Functions.col("val")));
-result.show();
+javaSession.sql("SELECT java_double_it(21) AS doubled").show();
 ```
 
 ### Creating a permanent UDF
 
 ```java
 %%java
-import com.snowflake.snowpark_java.types.DataTypes;
+javaSession.sql(
+    "CREATE OR REPLACE FUNCTION java_celsius_to_f(c DOUBLE) " +
+    "RETURNS DOUBLE " +
+    "LANGUAGE JAVA " +
+    "RUNTIME_VERSION = '17' " +
+    "HANDLER = 'Handler.compute' " +
+    "AS 'class Handler { " +
+    "  public static double compute(double c) { return c * 9.0 / 5.0 + 32.0; } " +
+    "}'"
+).collect();
 
-javaSession.udf().registerPermanent(
-    "java_double_it",
-    (Integer x) -> x * 2,
-    DataTypes.IntegerType,
-    DataTypes.IntegerType,
-    "@~/java_udfs");
-
-// Call by name
-javaSession.sql("SELECT java_double_it(42) AS result").show();
+javaSession.sql("SELECT java_celsius_to_f(100.0) AS fahrenheit").show();
 ```
+
+> **Why not `registerTemporary()` / `registerPermanent()`?**
+> These Snowpark Java methods serialize the lambda closure and need to find
+> the enclosing class file on disk.  JShell compiles snippets to an in-memory
+> classloader with no disk output, so Snowpark reports
+> *"Unable to detect the location of the enclosing class"*.  The SQL inline
+> approach bypasses this entirely — the handler source is sent directly to
+> Snowflake's server-side Java runtime.
 
 ### Alternatives for managing UDFs/procedures
 
