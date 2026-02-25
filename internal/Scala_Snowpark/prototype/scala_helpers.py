@@ -1216,32 +1216,32 @@ def _is_snowpark_java_df_by_name(name: str) -> bool:
 def _pull_snowpark_java_df(name: str) -> Optional[Any]:
     """Pull a Snowpark Java DataFrame back into Python as a Snowpark Python DF.
 
-    Strategy: extract the SQL plan from the Java DF via its
-    ``getQueries()`` output, then execute it on the Python session.
-    As a simpler approach we materialise to a temp view and read it
-    back via the Python Snowpark session.
+    Materialises the Java DF to a Snowflake transient table and reads it
+    back via the Python Snowpark session. A transient table is used (not a
+    temp view) because the Java and Python sessions are separate Snowflake
+    connections — temp views are only visible within their owning session.
     """
-    view_name = f"_INTEROP_JAVA_{name.upper()}"
-    code = f'{name}.createOrReplaceTempView("{view_name}");'
+    table_name = f"_INTEROP_JAVA_{name.upper()}"
+    code = f'{name}.write().mode(com.snowflake.snowpark_java.SaveMode.Overwrite).saveAsTable("{table_name}");'
     success, _, errors = execute_java(code)
     if not success:
         print(
-            f"Warning: Could not create temp view for Java DF '{name}'"
+            f"Warning: Could not materialise Java DF '{name}' to table"
             + (f": {errors}" if errors else ""),
             file=sys.stderr,
         )
         return None
 
-    _interop_views.append(view_name)
+    _interop_views.append(table_name)
 
     session = _scala_state.get("python_session")
     if session is None:
         print("Warning: No Python Snowpark session available", file=sys.stderr)
         return None
     try:
-        return session.table(view_name)
+        return session.table(table_name)
     except Exception as e:
-        print(f"Warning: Could not read interop view '{view_name}': {e}",
+        print(f"Warning: Could not read interop table '{table_name}': {e}",
               file=sys.stderr)
         return None
 
