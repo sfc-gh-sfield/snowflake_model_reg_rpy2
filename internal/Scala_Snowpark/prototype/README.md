@@ -1,4 +1,4 @@
-# Scala / Snowpark Scala Prototype for Workspace Notebooks
+# Scala & Java / Snowpark Prototype for Workspace Notebooks
 
 **Status:** Prototype / Proof of Concept — **Working** in Snowflake Workspace Notebooks
 **Date:** February 2026
@@ -8,23 +8,24 @@
 
 ## Overview
 
-This prototype enables **Scala execution**, **Snowpark Scala**, and
-**Snowpark Connect for Scala** within Snowflake Workspace Notebooks using
-`%%scala` and `%scala` cell/line magics. It follows the same architectural
-pattern as the R/rpy2 integration:
+This prototype enables **Scala execution**, **Java execution**,
+**Snowpark Scala**, **Snowpark Java**, and **Snowpark Connect for Scala**
+within Snowflake Workspace Notebooks using `%%scala` / `%%java` cell magics
+powered by JPype. It follows the same architectural pattern as the R/rpy2
+integration:
 
-| Layer | R Solution | Scala Solution (this prototype) |
+| Layer | R Solution | Scala / Java Solution (this prototype) |
 |-------|-----------|-------------------------------|
 | Runtime | R via micromamba | OpenJDK 17 + Scala 2.12 via micromamba |
 | Bridge | rpy2 (embeds R in Python) | JPype1 (embeds JVM in Python via JNI) |
-| Magic | `%%R` from rpy2 | `%%scala` / `%scala` (custom, in `scala_helpers.py`) |
-| REPL | R interpreter | Scala IMain (Ammonite-lite mode) |
-| Auth | ADBC + PAT | Snowpark Scala + **SPCS OAuth token** |
+| Magic | `%%R` from rpy2 | `%%scala` / `%%java` (custom, in `scala_helpers.py`) |
+| REPL | R interpreter | Scala IMain (Ammonite-lite) + JShell (Java) |
+| Auth | ADBC + PAT | Snowpark Scala/Java + **SPCS OAuth token** |
 | Spark Connect | N/A | Snowpark Connect gRPC proxy (opt-in) |
 
-**Two APIs, one notebook:** When Spark Connect is enabled, users get both
-`sfSession.sql(...)` (Snowpark Scala, direct JDBC) and `spark.sql(...)`
-(Spark SQL via the Spark Connect gRPC proxy) in the same `%%scala` cells.
+**Three languages, one notebook:** Both `%%scala` and `%%java` magics share
+the same in-process JVM, classpath, and credential injection. When Spark
+Connect is enabled, users additionally get `spark.sql(...)` in `%%scala` cells.
 
 ---
 
@@ -35,8 +36,9 @@ prototype/
 ├── README.md                              # This file
 ├── scala_packages.yaml                    # Version configuration
 ├── setup_scala_environment.sh             # Installation script
-├── scala_helpers.py                       # Python helper module
-└── workspace_scala_quickstart.ipynb       # Example notebook
+├── scala_helpers.py                       # Python helper module (Scala + Java)
+├── workspace_scala_quickstart.ipynb       # Scala example notebook
+└── workspace_java_quickstart.ipynb        # Java example notebook
 ```
 
 ---
@@ -85,6 +87,23 @@ Single-line Scala is also supported:
 %scala println(s"Quick: ${1 + 1}")
 ```
 
+### 3b. Use %%java (available alongside %%scala)
+
+The same `setup_scala_environment()` call also initializes JShell (JDK 17's
+built-in Java REPL) and registers `%%java` / `%java` magics:
+
+```python
+%%java
+System.out.println("Hello from Java " + System.getProperty("java.version"));
+```
+
+```python
+%java System.out.println("2 + 2 = " + (2 + 2));
+```
+
+Both `%%scala` and `%%java` share the same JVM, classpath, and System
+properties. No extra installation is needed — JShell ships with JDK 17.
+
 ### 4. Connect to Snowflake
 
 Inside a Workspace Notebook, the SPCS OAuth token at
@@ -122,9 +141,33 @@ val sfSession = Session.builder.configs(Map(
 sfSession.sql("SELECT CURRENT_USER(), CURRENT_ROLE()").show()
 ```
 
+For **Snowpark Java**, the pattern is similar:
+
+```python
+%%java
+import com.snowflake.snowpark_java.*;
+import java.util.HashMap;
+import java.util.Map;
+
+Map<String, String> props = new HashMap<>();
+props.put("URL",       System.getProperty("SNOWFLAKE_URL"));
+props.put("USER",      System.getProperty("SNOWFLAKE_USER"));
+props.put("ROLE",      System.getProperty("SNOWFLAKE_ROLE"));
+props.put("DB",        System.getProperty("SNOWFLAKE_DATABASE"));
+props.put("SCHEMA",    System.getProperty("SNOWFLAKE_SCHEMA"));
+props.put("WAREHOUSE", System.getProperty("SNOWFLAKE_WAREHOUSE"));
+props.put("TOKEN",     System.getProperty("SNOWFLAKE_TOKEN"));
+props.put("AUTHENTICATOR", System.getProperty("SNOWFLAKE_AUTH_TYPE"));
+
+Session javaSession = Session.builder().configs(props).create();
+javaSession.sql("SELECT CURRENT_USER(), CURRENT_ROLE()").show();
+```
+
 ---
 
 ## Magic Flags
+
+### %%scala flags
 
 The `%%scala` cell magic supports flags modelled on rpy2's `%%R`:
 
@@ -174,6 +217,37 @@ Scala sees them (e.g. `${2 + 2}` becomes `$4`). Use `$varName` (no braces)
 or string concatenation for `%scala`. For `s"${...}"` interpolation, use
 `%%scala` cells which pass the body through unmodified.
 
+### %%java flags
+
+The `%%java` cell magic supports the same flag syntax:
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-i var1,var2` | Push Python variables into Java (primitives, strings, Snowpark DFs) | `%%java -i name,count` |
+| `-o var1,var2` | Pull Java variables into Python (primitives, strings, Snowpark DFs) | `%%java -o result` |
+| `--silent` | Suppress output | `%%java --silent` |
+| `--time` | Print wall-clock execution time | `%%java --time` |
+
+**Snowpark Java DFs:** When `-i` receives a Snowpark Python DataFrame, it is
+pushed into JShell as a `com.snowflake.snowpark_java.DataFrame` via SQL plan
+transfer. When `-o` detects a Snowpark Java DataFrame, it is pulled back as a
+Snowpark Python DataFrame via a temp view.
+
+```python
+py_df = session.table("customers")
+```
+
+```python
+%%java -i py_df -o high_value --time
+import com.snowflake.snowpark_java.Functions;
+DataFrame high_value = py_df.filter(Functions.col("SPEND").gt(Functions.lit(1000)));
+high_value.show();
+```
+
+```python
+high_value.show()  # Snowpark Python DataFrame
+```
+
 ---
 
 ## Authentication
@@ -181,8 +255,7 @@ or string concatenation for `%scala`. For `s"${...}"` interpolation, use
 ### Inside Workspace Notebooks (SPCS)
 
 Workspace Notebooks run inside SPCS containers. The container provides an
-OAuth token at `/snowflake/session/token`. This is the **only** accepted
-authentication method — PATs are explicitly blocked from inside SPCS.
+OAuth token at `/snowflake/session/token`. 
 
 `inject_session_credentials()` detects this automatically and sets:
 - `SNOWFLAKE_TOKEN` → contents of `/snowflake/session/token`
@@ -193,8 +266,9 @@ because Java's `System.getenv()` caches the process environment at JVM
 startup, making `os.environ` changes invisible to Scala after
 `jpype.startJVM()`. Scala reads them via `System.getProperty(key)`.
 
-This is actually **simpler than the R integration** — no PAT creation
-step needed. The container's token is auto-detected and injected.
+For the Scala/Java Snowpark path, no PAT creation step is needed — the
+container's OAuth token is auto-detected and injected. (The R integration
+uses PATs for ADBC authentication, which also works inside SPCS.)
 
 ### Outside Workspace (e.g. local Jupyter)
 
@@ -217,7 +291,7 @@ The `-i` / `-o` flags auto-detect DataFrame types and pick the right
 transfer strategy. Both **Snowpark** and **PySpark** DataFrames are
 supported, plus cross-API transfers when Spark Connect is enabled.
 
-### Same-API Transfers (default)
+### %%scala: Same-API Transfers (default)
 
 | Direction | Source | Target | Mechanism |
 |-----------|--------|--------|-----------|
@@ -229,6 +303,17 @@ supported, plus cross-API transfers when Spark Connect is enabled.
 No data is copied for Snowpark transfers — only the SQL string crosses
 the JPype bridge. PySpark transfers use Spark temp views (both Python and
 Scala talk to the same Spark Connect server).
+
+### %%java: Snowpark Java Transfers
+
+| Direction | Source | Target | Mechanism |
+|-----------|--------|--------|-----------|
+| `-i` push | Snowpark Python DF | Snowpark Java DF | SQL plan → `javaSession.sql()` |
+| `-o` pull | Snowpark Java DF | Snowpark Python DF | Temp view → `session.table()` |
+
+The Java interop uses the same SQL plan transfer mechanism as Scala for
+Snowpark DataFrames. The Java Snowpark API (`com.snowflake.snowpark_java.*`)
+ships in the same JAR as the Scala API — no extra dependencies needed.
 
 ### Cross-API Transfers (type hints)
 
@@ -325,8 +410,8 @@ aggregated.show()  # Back as Snowpark Python DataFrame
 For cases where SQL plan transfer isn't suitable (e.g. materialised results,
 ad-hoc exploration), you can use tables directly.
 
-The Python and Scala Snowpark sessions are **separate Snowflake connections**.
-This has important implications:
+The Python, Scala, and Java Snowpark sessions are **separate Snowflake
+connections**. This has important implications:
 
 | Table Type | Visible across sessions? | Use case |
 |------------|:---:|---------|
@@ -334,8 +419,8 @@ This has important implications:
 | `TRANSIENT TABLE` | Yes | Recommended for sharing, drop after use |
 | Permanent `TABLE` | Yes | Persistent data, standard cleanup needed |
 
-Use `TRANSIENT TABLE` for sharing data between Python and Scala, and drop
-it when done to avoid accumulating objects.
+Use `TRANSIENT TABLE` for sharing data between Python, Scala, and Java,
+and drop it when done to avoid accumulating objects.
 
 ---
 
@@ -360,8 +445,8 @@ extra_dependencies:
 
 ### Adding Extra Java/Scala Dependencies
 
-To use additional Java or Scala libraries in your `%%scala` cells, add their
-Maven coordinates to the `extra_dependencies` list in `scala_packages.yaml`:
+To use additional Java or Scala libraries in your `%%scala` or `%%java` cells,
+add their Maven coordinates to the `extra_dependencies` list in `scala_packages.yaml`:
 
 ```yaml
 extra_dependencies:
@@ -378,7 +463,7 @@ Then re-run the setup script:
 
 Coursier resolves each artifact and its transitive dependencies from Maven
 Central and adds them to the JVM classpath. They become available in
-`%%scala` cells after calling `setup_scala_environment()`.
+`%%scala` and `%%java` cells after calling `setup_scala_environment()`.
 
 **Format:** `"<groupId>:<artifactId>:<version>"` -- standard Maven
 coordinates. You can find these on [Maven Central](https://search.maven.org/)
@@ -430,10 +515,10 @@ Spark SQL experience alongside Snowpark Scala.
 
 ### How It Works
 
-1. **Single JVM:** Both Snowpark Scala and the Spark Connect client share
-   the same in-process JVM. The JVM classpath includes Snowpark JARs,
-   Scala compiler, Ammonite, Spark Connect client JARs, and PySpark's
-   bundled JARs (spark-sql, spark-catalyst, etc.).
+1. **Single JVM:** Snowpark Scala, Snowpark Java, and the Spark Connect client
+   all share the same in-process JVM. The JVM classpath includes Snowpark JARs
+   (both Scala and Java APIs), Scala compiler, Ammonite, JShell, Spark Connect
+   client JARs, and PySpark's bundled JARs (spark-sql, spark-catalyst, etc.).
 
 2. **Python gRPC server:** `snowpark_connect` runs a local gRPC server
    (port 15002) that translates Spark Connect protocol messages into
@@ -489,12 +574,18 @@ spark.sql("SELECT 1 AS id, 'hello from Spark Connect' AS msg").show()
 
 ## Interpreter Modes
 
-The prototype supports two REPL backends:
+The prototype supports three REPL backends:
 
-| Mode | Description | `import $ivy` | UDF Support |
-|------|-------------|:---:|:---:|
-| **ammonite-lite** | IMain with Ammonite JARs pre-loaded (default) | Pre-loaded only | Via Settings API |
-| **imain** | Raw Scala IMain (fallback) | No | Via Settings API |
+| Mode | Language | Description | Notes |
+|------|----------|-------------|-------|
+| **ammonite-lite** | Scala | IMain with Ammonite JARs pre-loaded (default) | Pre-loaded JARs only, no runtime `import $ivy` |
+| **imain** | Scala | Raw Scala IMain (fallback) | Fallback if Ammonite resolution fails |
+| **jshell** | Java | JDK 17 built-in JShell with `LocalExecutionControl` | Ships with JDK, no extra JARs |
+
+The Scala and Java interpreters run side by side in the same JVM process.
+JShell uses `LocalExecutionControl`, which means it executes code in the
+same process (sharing System properties, classpath, and memory with the
+Scala REPL and JPype).
 
 Full Ammonite embedding (with runtime `import $ivy`) is a stretch goal.
 The current "ammonite-lite" mode pre-loads all JARs at JVM startup and
@@ -556,6 +647,8 @@ Issues discovered and resolved during prototype development:
 | Ammonite API undocumented | "ammonite-lite" mode as workaround | Investigate Ammonite `Main` API |
 | Separate Snowflake sessions | Python and Scala sessions are independent | SQL plan transfer via `-i`/`-o`, or transient tables |
 | `%scala` can't use `s"${...}"` | IPython expands `${expr}` before Scala sees it | Use `%%scala` cells for string interpolation |
+| `%%java` no PySpark DF interop | JShell interop targets Snowpark Java only | Use `%%scala` for PySpark DataFrame operations |
+| JShell variable pull limited | Only primitives, strings, and Snowpark DFs pull cleanly | Complex Java objects stay in JShell |
 | Spark Connect: limited SQL functions | Proxy doesn't map all Snowflake system functions | Use Snowpark Scala (`sfSession`) for full Snowflake SQL |
 | Spark Connect: single JVM constraint | Both Snowpark + Spark Connect must share one JVM | Handled by monkey-patching `start_jvm`; fragile across spc versions |
 | `-o:snowpark` materialises data | Cross-API pull writes a transient table then reads it back | Inherent — Spark DFs don't expose a SQL plan Snowpark can consume directly |
@@ -570,6 +663,7 @@ Issues discovered and resolved during prototype development:
 | `Metadata file not found` | Setup script not run | Run `!bash setup_scala_environment.sh` |
 | `Failed to start JVM` | JAVA_HOME wrong or JDK not installed | Check `java -version` works |
 | `No Scala interpreter initialized` | `setup_scala_environment()` not called | Call it before using `%%scala` |
+| `JShell not initialized` | `setup_scala_environment()` not called or JShell init failed | Call `setup_scala_environment()` before using `%%java` |
 | `OutOfMemoryError` | JVM heap too small | Set `jvm_heap: "4g"` in `scala_packages.yaml`, restart container |
 | `class not found: snowpark` | Snowpark JAR not on classpath | Re-run setup script with `--force` |
 | `Failed to initialize MemoryUtil` | Missing `--add-opens` JVM flag | Add flag to `jvm_options`, restart container |
@@ -590,11 +684,8 @@ Issues discovered and resolved during prototype development:
 This prototype reuses infrastructure from the R integration:
 
 - **micromamba** — same installer, can coexist in the same container
-- **SPCS OAuth token** — same authentication mechanism (R uses ADBC,
-  Scala uses Snowpark JDBC, but both use the SPCS OAuth token)
+- **Authentication** — R uses ADBC with a PAT (created via `PATManager`),
+  Scala/Java use Snowpark JDBC with the SPCS OAuth token injected by the
+  container. The Scala/Java path is simpler since no PAT creation step is needed.
 - **PERSISTENT_DIR** — same persistence strategy applies
 - **Architecture pattern** — same "install runtime + bridge + magic" approach
-
-Key difference: R authentication uses ADBC with PAT, while Scala/Snowpark
-in Workspace Notebooks **must** use the SPCS OAuth token. This is actually
-simpler — no PAT creation needed, the token is injected by the container.

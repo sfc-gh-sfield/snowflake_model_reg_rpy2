@@ -1,7 +1,7 @@
 ---
 description: Snowflake Workspace Notebook cell metadata requirements
 globs: "**/*.ipynb"
-alwaysApply: false
+alwaysApply: true
 ---
 
 # Snowflake Workspace Notebook Format
@@ -12,16 +12,34 @@ will auto-add missing fields on open, causing spurious diffs and merge conflicts
 
 ## Required Cell Structure
 
+### Top-level structure
+
+```json
+{
+  "metadata": {
+    "kernelspec": {
+      "name": "jupyter",
+      "display_name": "Jupyter Notebook"
+    }
+  },
+  "nbformat_minor": 5,
+  "nbformat": 4,
+  "cells": [...]
+}
+```
+
+Key order matters: `metadata`, `nbformat_minor`, `nbformat`, `cells`.
+
 ### Markdown cells
 
 ```json
 {
   "cell_type": "markdown",
+  "id": "<uuid4>",
   "metadata": {
     "codeCollapsed": true
   },
-  "source": ["..."],
-  "id": "<uuid4>"
+  "source": ["..."]
 }
 ```
 
@@ -30,33 +48,47 @@ will auto-add missing fields on open, causing spurious diffs and merge conflicts
 ```json
 {
   "cell_type": "code",
+  "id": "<uuid4>",
   "metadata": {
     "language": "python"
   },
   "source": ["..."],
   "execution_count": null,
-  "outputs": [],
-  "id": "<uuid4>"
+  "outputs": []
 }
 ```
 
 ## Rules
 
-1. **Every cell must have an `"id"` field** — a UUID4 string (generate one per cell).
-2. **Markdown cells** must have `"metadata": {"codeCollapsed": true}`.
-3. **Code cells** must have `"metadata": {"language": "python"}`.
-4. **Code cells** must include `"execution_count": null` and `"outputs": []`.
-5. **Before editing** a Workspace notebook, always pull the latest version pushed
+1. **`nbformat_minor` must be `5`** — cell `id` fields are only valid in 4.5+.
+2. **`kernelspec.name` must be `"jupyter"`** — Workspace expects this, not `"python3"`.
+3. **Every cell must have an `"id"` field** — a UUID4 string (generate one per cell).
+4. **Markdown cells** must have `"metadata": {"codeCollapsed": true}`.
+5. **Code cells** must have `"metadata": {"language": "python"}`.
+6. **Code cells** must include `"execution_count": null` and `"outputs": []`.
+7. **Before editing** a Workspace notebook, always pull the latest version pushed
    from Workspace first — it is the source of truth for metadata.
-6. **Never strip or overwrite** existing cell `id` values or metadata fields.
+8. **Never strip or overwrite** existing cell `id` values or metadata fields.
+9. **JSON must use `indent=2`** — do NOT use `indent=1` or other values.
 
-## CRITICAL: EditNotebook tool does NOT add required metadata
+## MANDATORY: Run validation after EVERY notebook edit
 
-The `EditNotebook` tool creates cells WITHOUT `id`, `execution_count`,
-`outputs`, or proper `metadata` fields. After using EditNotebook to add
-or modify cells, you MUST run a fixup script (Python) to ensure every
-cell has the required structure before committing. Missing fields cause
-Workspace to reject the notebook as "corrupted or invalid format".
+After ANY edit to a `.ipynb` file — whether via EditNotebook, direct JSON
+editing, or any other method — you MUST run the global validation script
+before committing:
+
+```bash
+python ~/.cursor/scripts/validate_notebook.py path/to/notebook.ipynb --fix
+```
+
+- Run on EVERY notebook you have modified, in EVERY project, EVERY time.
+- Run it BEFORE `git add` / `git commit`.
+- If the script reports fixes applied, review the diff to confirm correctness.
+- You can pass a directory to validate all `.ipynb` files recursively:
+  `python ~/.cursor/scripts/validate_notebook.py . --fix`
+
+This is NON-NEGOTIABLE. Missing metadata causes Workspace to reject the
+notebook as "corrupted or invalid format".
 
 ## Markdown Content Rules
 

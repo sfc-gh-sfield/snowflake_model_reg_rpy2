@@ -1,12 +1,14 @@
 """
-Scala Environment Helpers for Snowflake Workspace Notebooks
+Scala & Java Environment Helpers for Snowflake Workspace Notebooks
 
 This module provides:
 - JVM startup via JPype (in-process, shared memory)
 - Scala REPL initialization (IMain or Ammonite)
+- JShell initialization for Java (JDK 17 built-in REPL)
 - %%scala cell magic and %scala line magic for Scala execution
-- -i / -o flags for Python <-> Scala variable transfer
-- Auto-detected DataFrame interop for both Snowpark and PySpark DFs
+- %%java cell magic and %java line magic for Java execution
+- -i / -o flags for Python <-> Scala/Java variable transfer
+- Auto-detected DataFrame interop for Snowpark (Scala & Java) and PySpark DFs
 - Cross-API transfers via -i:spark / -o:snowpark type hints
 - Snowpark session credential injection (SPCS OAuth + PAT fallback)
 - Snowpark Connect for Scala (opt-in): local Spark Connect gRPC server
@@ -16,8 +18,9 @@ This module provides:
 Architecture:
     Python Kernel  <-->  JVM (in-process via JPype/JNI)
                             - Scala IMain or Ammonite REPL
-                            - Snowpark Scala session
-                            - User Scala code execution
+                            - JShell REPL (Java)
+                            - Snowpark Scala / Java session
+                            - User Scala / Java code execution
 
 Usage:
     from scala_helpers import setup_scala_environment
@@ -29,8 +32,13 @@ Usage:
     # val x = 42
     # println(s"The answer is $x")
 
+    # %%java
+    # int x = 42;
+    # System.out.println("The answer is " + x);
+
     # Single-line:
     # %scala println("Hello!")
+    # %java System.out.println("Hello!");
 
     # With variable transfer (like rpy2's %%R -i / -o):
     # %%scala -i count -o total
@@ -91,12 +99,13 @@ _scala_state = {
 
 def setup_scala_environment(
     register_magic: bool = True,
+    register_java_magic: bool = True,
     prefer_ammonite: bool = True,
     install_jpype: bool = True,
     metadata_file: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
-    Configure the Python environment for Scala execution via JPype.
+    Configure the Python environment for Scala and Java execution via JPype.
 
     This function:
     1. Loads environment metadata from the setup script
@@ -104,10 +113,12 @@ def setup_scala_environment(
     3. Installs JPype if needed
     4. Starts the JVM with the correct classpath
     5. Initializes a Scala REPL (Ammonite or IMain)
-    6. Registers the %%scala IPython magic
+    6. Initializes a JShell interpreter for Java
+    7. Registers the %%scala and %%java IPython magics
 
     Args:
         register_magic: Whether to register the %%scala magic (default: True)
+        register_java_magic: Whether to register the %%java magic (default: True)
         prefer_ammonite: Try Ammonite first, fall back to IMain (default: True)
         install_jpype: Whether to pip-install JPype1 if missing (default: True)
         metadata_file: Path to scala_env_metadata.json (default: auto-detect)
@@ -124,6 +135,8 @@ def setup_scala_environment(
         "jpype_installed": False,
         "jvm_started": False,
         "magic_registered": False,
+        "java_magic_registered": False,
+        "jshell_initialized": False,
         "spark_connect_enabled": False,
         "errors": [],
     }
@@ -259,7 +272,7 @@ def setup_scala_environment(
             result["errors"].append(f"IMain init failed: {e}")
             return result
 
-    # --- Register magic ---
+    # --- Register Scala magic ---
     if register_magic:
         try:
             _register_scala_magic()
@@ -267,6 +280,22 @@ def setup_scala_environment(
             _scala_state["magic_registered"] = True
         except Exception as e:
             result["errors"].append(f"Failed to register %%scala magic: {e}")
+
+    # --- Initialize JShell for Java ---
+    try:
+        _init_jshell(metadata)
+        result["jshell_initialized"] = True
+    except Exception as e:
+        result["errors"].append(f"JShell init failed: {e}")
+
+    # --- Register Java magic ---
+    if register_java_magic and result["jshell_initialized"]:
+        try:
+            _register_java_magic()
+            result["java_magic_registered"] = True
+            _java_state["magic_registered"] = True
+        except Exception as e:
+            result["errors"].append(f"Failed to register %%java magic: {e}")
 
     result["spark_connect_enabled"] = metadata.get("spark_connect_enabled", False)
     result["success"] = len(result["errors"]) == 0
@@ -645,6 +674,131 @@ def _init_ammonite(metadata: Dict[str, Any]) -> None:
 
 
 # =============================================================================
+# Java Interpreter: JShell (JDK 17+)
+# =============================================================================
+
+# Populated after JShell init
+_java_state: Dict[str, Any] = {
+    "jshell": None,
+    "magic_registered": False,
+}
+
+
+def _init_jshell(metadata: Dict[str, Any]) -> None:
+    """Initialize a JShell interpreter via JPype.
+
+    JShell ships with JDK 9+ so no extra JARs are needed.  We use the
+    ``local`` execution engine so that JShell runs in-process, sharing
+    the same JVM, classpath, and System properties as the Scala REPL.
+    """
+    import jpype
+
+    JShell = jpype.JClass("jdk.jshell.JShell")
+    jshell = JShell.builder().executionEngine("local").build()
+
+    # Feed the full classpath so Snowpark Java classes are available
+    cp = _build_classpath(metadata, include_ammonite=False)
+    for entry in cp:
+        if entry and os.path.exists(entry):
+            jshell.addToClasspath(entry)
+
+    _java_state["jshell"] = jshell
+
+    # Warm-up: first eval is slow because it triggers classloading
+    _execute_jshell('System.out.println("JShell ready");')
+
+
+def _execute_jshell(code: str) -> Tuple[bool, str, str]:
+    """Execute Java code via JShell.
+
+    JShell's ``eval()`` processes one *snippet* at a time.  We pass the
+    entire cell contents and iterate over the returned ``SnippetEvent``
+    list.
+
+    Returns:
+        (success, stdout_output, error_output)
+    """
+    import jpype
+
+    jshell = _java_state["jshell"]
+    if jshell is None:
+        return False, "", "JShell not initialized. Call setup_scala_environment() first."
+
+    Snippet = jpype.JClass("jdk.jshell.Snippet")
+    Status = Snippet.Status
+
+    # Redirect System.out / System.err to capture println output
+    from java.io import ByteArrayOutputStream as BAOS, PrintStream
+    old_out = jpype.JClass("java.lang.System").out
+    old_err = jpype.JClass("java.lang.System").err
+    sys_out_capture = BAOS()
+    sys_err_capture = BAOS()
+    jpype.JClass("java.lang.System").setOut(PrintStream(sys_out_capture, True))
+    jpype.JClass("java.lang.System").setErr(PrintStream(sys_err_capture, True))
+
+    all_ok = True
+    value_parts: list = []
+    error_parts: list = []
+
+    try:
+        events = jshell.eval(code)
+        for event in events:
+            status = event.status()
+            if status == Status.VALID:
+                val = event.value()
+                if val is not None:
+                    val_str = str(val).strip()
+                    if val_str:
+                        value_parts.append(val_str)
+            elif status == Status.REJECTED:
+                all_ok = False
+                diag_iter = jshell.diagnostics(event.snippet())
+                while diag_iter.hasNext():
+                    d = diag_iter.next()
+                    error_parts.append(str(d.getMessage(None)))
+                if not error_parts:
+                    error_parts.append(
+                        f"Snippet rejected: {str(event.snippet().source()).strip()}"
+                    )
+            ex = event.exception()
+            if ex is not None:
+                all_ok = False
+                error_parts.append(str(ex.getMessage()))
+    finally:
+        jpype.JClass("java.lang.System").setOut(old_out)
+        jpype.JClass("java.lang.System").setErr(old_err)
+
+    stdout_text = str(sys_out_capture.toString()).strip()
+    stderr_text = str(sys_err_capture.toString()).strip()
+
+    parts = []
+    if stdout_text:
+        parts.append(stdout_text)
+    if value_parts:
+        parts.append("\n".join(value_parts))
+    combined = "\n".join(parts)
+
+    if stderr_text:
+        if error_parts:
+            error_parts.insert(0, stderr_text)
+        else:
+            error_parts.append(stderr_text)
+
+    return all_ok, combined, "\n".join(error_parts)
+
+
+def execute_java(code: str) -> Tuple[bool, str, str]:
+    """Execute Java code in the JShell interpreter.
+
+    Returns:
+        (success, output, errors)
+    """
+    if _java_state.get("jshell") is None:
+        return False, "", "No JShell interpreter initialized. Call setup_scala_environment() first."
+    return _execute_jshell(code)
+
+
+# =============================================================================
 # Unified Execution Interface
 # =============================================================================
 
@@ -904,6 +1058,262 @@ def _register_scala_magic() -> None:
 
 
 # =============================================================================
+# %%java IPython Magic
+# =============================================================================
+
+def _push_inputs_java(items: List[Tuple[str, Optional[str]]]) -> None:
+    """Push Python variables into JShell.
+
+    Dispatch is similar to the Scala version but targets the Java
+    Snowpark API (``com.snowflake.snowpark_java.DataFrame``).
+    """
+    ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
+    for name, hint in items:
+        if name not in ip.user_ns:
+            print(
+                f"Warning: Python variable '{name}' not found, skipping",
+                file=sys.stderr,
+            )
+            continue
+
+        value = ip.user_ns[name]
+
+        if _is_snowpark_python_df(value):
+            _push_snowpark_df_to_java(name, value)
+        elif isinstance(value, str):
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            execute_java(f'String {name} = "{escaped}";')
+        elif isinstance(value, bool):
+            execute_java(f"boolean {name} = {'true' if value else 'false'};")
+        elif isinstance(value, int):
+            execute_java(f"long {name} = {value}L;")
+        elif isinstance(value, float):
+            execute_java(f"double {name} = {value};")
+        else:
+            print(
+                f"Warning: Cannot push '{name}' (type {type(value).__name__}) to Java",
+                file=sys.stderr,
+            )
+
+
+def _pull_outputs_java(items: List[Tuple[str, Optional[str]]]) -> None:
+    """Pull Java variables back into Python."""
+    ip = get_ipython()  # type: ignore[name-defined]  # noqa: F821
+    for name, hint in items:
+        if _is_snowpark_java_df_by_name(name):
+            py_df = _pull_snowpark_java_df(name)
+            if py_df is not None:
+                ip.user_ns[name] = py_df
+                continue
+
+        val = _pull_from_jshell(name)
+        if val is None:
+            print(f"Warning: Java variable '{name}' not found, skipping",
+                  file=sys.stderr)
+        else:
+            ip.user_ns[name] = val
+
+
+def _push_snowpark_df_to_java(name: str, df) -> bool:
+    """Push a Snowpark Python DataFrame into JShell via SQL plan transfer."""
+    import jpype
+
+    try:
+        queries = df.queries.get("queries", [])
+        if not queries:
+            print(f"Warning: DataFrame '{name}' has no SQL queries",
+                  file=sys.stderr)
+            return False
+        sql = queries[-1]
+    except (AttributeError, KeyError, IndexError) as e:
+        print(f"Warning: Could not extract SQL plan from '{name}': {e}",
+              file=sys.stderr)
+        return False
+
+    prop_key = f"_interop_java_sql_{name}"
+    System = jpype.JClass("java.lang.System")
+    System.setProperty(prop_key, sql)
+
+    code = (
+        f'com.snowflake.snowpark_java.DataFrame {name} = '
+        f'javaSession.sql(System.getProperty("{prop_key}"));'
+    )
+    success, output, errors = execute_java(code)
+
+    System.clearProperty(prop_key)
+
+    if not success:
+        msg = errors or output
+        print(f"Warning: Failed to create Java DataFrame '{name}': {msg}",
+              file=sys.stderr)
+    return success
+
+
+def _is_snowpark_java_df_by_name(name: str) -> bool:
+    """Check whether *name* in JShell references a Snowpark Java DataFrame."""
+    jshell = _java_state.get("jshell")
+    if jshell is None:
+        return False
+    try:
+        import jpype
+        snippets = jshell.snippets()
+        VarSnippet = jpype.JClass("jdk.jshell.VarSnippet")
+        while snippets.hasNext():
+            s = snippets.next()
+            if isinstance(s, VarSnippet) and str(s.name()) == name:
+                type_name = str(s.typeName())
+                if "snowpark_java" in type_name and "DataFrame" in type_name:
+                    return True
+        return False
+    except Exception:
+        return False
+
+
+def _pull_snowpark_java_df(name: str) -> Optional[Any]:
+    """Pull a Snowpark Java DataFrame back into Python as a Snowpark Python DF.
+
+    Strategy: extract the SQL plan from the Java DF via its
+    ``getQueries()`` output, then execute it on the Python session.
+    As a simpler approach we materialise to a temp view and read it
+    back via the Python Snowpark session.
+    """
+    view_name = f"_INTEROP_JAVA_{name.upper()}"
+    code = f'{name}.createOrReplaceTempView("{view_name}");'
+    success, _, errors = execute_java(code)
+    if not success:
+        print(
+            f"Warning: Could not create temp view for Java DF '{name}'"
+            + (f": {errors}" if errors else ""),
+            file=sys.stderr,
+        )
+        return None
+
+    _interop_views.append(view_name)
+
+    session = _scala_state.get("python_session")
+    if session is None:
+        print("Warning: No Python Snowpark session available", file=sys.stderr)
+        return None
+    try:
+        return session.table(view_name)
+    except Exception as e:
+        print(f"Warning: Could not read interop view '{view_name}': {e}",
+              file=sys.stderr)
+        return None
+
+
+def _pull_from_jshell(name: str) -> Optional[Any]:
+    """Extract a primitive/string variable from JShell."""
+    jshell = _java_state.get("jshell")
+    if jshell is None:
+        return None
+    try:
+        import jpype
+        VarSnippet = jpype.JClass("jdk.jshell.VarSnippet")
+        Snippet = jpype.JClass("jdk.jshell.Snippet")
+        snippets = jshell.snippets()
+        target = None
+        while snippets.hasNext():
+            s = snippets.next()
+            if isinstance(s, VarSnippet) and str(s.name()) == name:
+                if jshell.status(s) == Snippet.Status.VALID:
+                    target = s
+        if target is None:
+            return None
+        val_str = str(jshell.varValue(target))
+        type_name = str(target.typeName())
+        if type_name in ("int", "long", "short", "byte",
+                         "Integer", "Long", "Short", "Byte"):
+            return int(val_str)
+        elif type_name in ("double", "float", "Double", "Float"):
+            return float(val_str)
+        elif type_name in ("boolean", "Boolean"):
+            return val_str.lower() == "true"
+        elif type_name == "String":
+            if val_str.startswith('"') and val_str.endswith('"'):
+                return val_str[1:-1]
+            return val_str
+        return val_str
+    except Exception:
+        return None
+
+
+def _register_java_magic() -> None:
+    """Register the ``%%java`` cell magic and ``%java`` line magic."""
+    try:
+        get_ipython()  # type: ignore[name-defined]  # noqa: F841
+    except NameError:
+        raise RuntimeError("Not in an IPython environment")
+
+    from IPython.core.magic import register_cell_magic, register_line_magic
+
+    @register_cell_magic
+    def java(line, cell):
+        """
+        Execute Java code in the embedded JShell interpreter.
+
+        Usage:
+            %%java
+            System.out.println("Hello from Java!");
+
+        Flags (on the %%java line):
+            -i var1,var2        Push Python variables into Java
+            -i:snowpark var     Push as Snowpark Java DataFrame
+            -o var1,var2        Pull Java variables into Python
+            -o:snowpark var     Pull as Snowpark Python DataFrame
+            --silent            Suppress output
+            --time              Print execution time
+        """
+        import time
+
+        args = _parse_magic_args(line)
+
+        if args["inputs"]:
+            _push_inputs_java(args["inputs"])
+
+        t0 = time.time()
+        success, output, errors = execute_java(cell)
+        elapsed = time.time() - t0
+
+        if output and not args["silent"]:
+            print(output)
+        if errors:
+            print(errors, file=sys.stderr)
+        if not success and not errors:
+            print("Java execution failed (no error details captured)",
+                  file=sys.stderr)
+
+        if success and args["outputs"]:
+            _pull_outputs_java(args["outputs"])
+
+        if args["show_time"]:
+            print(f"\n[Java cell executed in {elapsed:.2f}s]")
+
+    @register_line_magic
+    def java(line):  # noqa: F811
+        """
+        Execute a single line of Java code.
+
+        Usage:
+            %java System.out.println("Hello!");
+        """
+        if not line.strip():
+            print("Usage: %java <java expression>", file=sys.stderr)
+            return
+
+        success, output, errors = execute_java(line)
+        if output:
+            print(output)
+        if errors:
+            print(errors, file=sys.stderr)
+        if not success and not errors:
+            print("Java execution failed (no error details captured)",
+                  file=sys.stderr)
+
+    _java_state["magic_registered"] = True
+
+
+# =============================================================================
 # Snowpark Session Management
 # =============================================================================
 
@@ -1059,6 +1469,69 @@ def create_snowpark_scala_session_code() -> str:
         'println(s"  Role:      ${_role}")\n'
         'println(s"  Database:  ${_db}")\n'
     )
+
+
+def create_snowpark_java_session_code() -> str:
+    """Generate Java code to create a Snowpark session using credentials
+    from Java System properties (set by ``inject_session_credentials``).
+
+    Returns:
+        Java code string ready for ``%%java`` execution.
+    """
+    return (
+        "import com.snowflake.snowpark_java.*;\n"
+        "import java.util.HashMap;\n"
+        "import java.util.Map;\n"
+        "\n"
+        "Map<String, String> props = new HashMap<>();\n"
+        'props.put("URL",       System.getProperty("SNOWFLAKE_URL"));\n'
+        'props.put("USER",      System.getProperty("SNOWFLAKE_USER"));\n'
+        'props.put("ROLE",      System.getProperty("SNOWFLAKE_ROLE"));\n'
+        'props.put("DB",        System.getProperty("SNOWFLAKE_DATABASE"));\n'
+        'props.put("SCHEMA",    System.getProperty("SNOWFLAKE_SCHEMA"));\n'
+        'props.put("WAREHOUSE", System.getProperty("SNOWFLAKE_WAREHOUSE"));\n'
+        'props.put("TOKEN",     System.getProperty("SNOWFLAKE_TOKEN"));\n'
+        'props.put("AUTHENTICATOR", System.getProperty("SNOWFLAKE_AUTH_TYPE"));\n'
+        "\n"
+        "Session javaSession = Session.builder().configs(props).create();\n"
+        "\n"
+        'System.out.println("Snowpark Java session created");\n'
+        'Row[] info = javaSession.sql("SELECT CURRENT_USER(), CURRENT_ROLE(), CURRENT_DATABASE()").collect();\n'
+        'System.out.println("  User:      " + info[0].getString(0));\n'
+        'System.out.println("  Role:      " + info[0].getString(1));\n'
+        'System.out.println("  Database:  " + info[0].getString(2));\n'
+    )
+
+
+def bootstrap_snowpark_java(session) -> Tuple[bool, str]:
+    """All-in-one: inject credentials and create a Snowpark Java session
+    in JShell.
+
+    Args:
+        session: Active Snowpark Python session
+
+    Returns:
+        (success, message)
+    """
+    creds = inject_session_credentials(session)
+    if not creds.get("SNOWFLAKE_ACCOUNT"):
+        return False, "Failed to extract account from session"
+
+    if not creds.get("SNOWFLAKE_TOKEN"):
+        return False, (
+            "No auth token available. Inside a Workspace the "
+            "SPCS token at /snowflake/session/token should be "
+            "auto-detected. For external use, set "
+            "os.environ['SNOWFLAKE_PAT'] before calling this."
+        )
+
+    code = create_snowpark_java_session_code()
+    success, output, errors = execute_java(code)
+
+    if success:
+        return True, output
+    else:
+        return False, errors or output or "Java session creation failed"
 
 
 # =============================================================================

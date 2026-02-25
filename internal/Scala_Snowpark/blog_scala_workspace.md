@@ -5,10 +5,10 @@ Snowpark Scala, Spark Connect, and Python-Scala interoperability*
 
 ---
 
-> **Heads up:** The Scala prototype described in this post is an experimental,
-> community-driven project. It is **not officially supported by Snowflake**.
-> It demonstrates what's possible today with the building blocks available in
-> Workspace Notebooks and is shared to solicit feedback and gauge interest.
+> **Heads up:** The Scala prototype described in this post is an experimental
+> project. It is **not officially supported by Snowflake**.
+> It demonstrates what's possible today within the existing building blocks available in
+> Workspace Notebooks and is shared to demonstrate the principle and solicit feedback.
 > APIs and behaviour may change. The full working prototype is available on
 > [GitHub](https://github.com/sfc-gh-sfield/snowflake-workspace-scala-prototype).
 
@@ -177,7 +177,7 @@ Snowflake Workspace Notebook.
 
 Workspace Notebooks run inside SPCS containers, which provide an OAuth token
 at `/snowflake/session/token`. This is the simplest authentication path --
-no PAT needed.
+no PAT, or other authentication method needed.
 
 ```python
 from snowflake.snowpark.context import get_active_session
