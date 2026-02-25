@@ -82,6 +82,16 @@ DEFAULT_JAR_DIR = os.path.expanduser("~/scala_jars")
 DEFAULT_METADATA_FILE = os.path.join(DEFAULT_JAR_DIR, "scala_env_metadata.json")
 DEFAULT_JVM_ENV_PREFIX = os.path.expanduser("~/micromamba/envs/jvm_env")
 
+
+class MagicExecutionError(Exception):
+    """Raised when a %%scala or %%java magic cell fails.
+
+    Raising this (rather than just printing to stderr) ensures that
+    Jupyter's "Run All" stops at the failing cell instead of silently
+    continuing.
+    """
+
+
 # Populated after setup
 _scala_state = {
     "jvm_started": False,
@@ -726,6 +736,10 @@ def _execute_jshell(code: str) -> Tuple[bool, str, str]:
 
     Snippet = jpype.JClass("jdk.jshell.Snippet")
     Status = Snippet.Status
+    sca = jshell.sourceCodeAnalysis()
+    Completeness = jpype.JClass(
+        "jdk.jshell.SourceCodeAnalysis$Completeness"
+    )
 
     # Redirect System.out / System.err to capture println output
     from java.io import ByteArrayOutputStream as BAOS, PrintStream
@@ -741,30 +755,48 @@ def _execute_jshell(code: str) -> Tuple[bool, str, str]:
     error_parts: list = []
 
     try:
-        events = jshell.eval(code)
-        for event in events:
-            status = event.status()
-            if status == Status.VALID:
-                val = event.value()
-                if val is not None:
-                    val_str = str(val).strip()
-                    if val_str:
-                        value_parts.append(val_str)
-            elif status == Status.REJECTED:
-                all_ok = False
-                diag_stream = jshell.diagnostics(event.snippet())
-                diag_iter = diag_stream.iterator()
-                while diag_iter.hasNext():
-                    d = diag_iter.next()
-                    error_parts.append(str(d.getMessage(None)))
-                if not error_parts:
-                    error_parts.append(
-                        f"Snippet rejected: {str(event.snippet().source()).strip()}"
-                    )
-            ex = event.exception()
-            if ex is not None:
-                all_ok = False
-                error_parts.append(str(ex.getMessage()))
+        # Strip leading/trailing whitespace but preserve internal structure
+        remaining = code.strip()
+        while remaining:
+            # Use SourceCodeAnalysis to find the next complete snippet
+            info = sca.analyzeCompletion(remaining)
+            source = str(info.source())
+            remaining = str(info.remaining()).strip()
+
+            if not source.strip():
+                break
+
+            # Skip pure comment lines that aren't valid snippets
+            completeness = info.completeness()
+            if completeness == Completeness.EMPTY:
+                continue
+
+            events = jshell.eval(source)
+            for event in events:
+                status = event.status()
+                if status == Status.VALID:
+                    val = event.value()
+                    if val is not None:
+                        val_str = str(val).strip()
+                        if val_str:
+                            value_parts.append(val_str)
+                elif status == Status.REJECTED:
+                    all_ok = False
+                    diag_iter = jshell.diagnostics(event.snippet()).iterator()
+                    while diag_iter.hasNext():
+                        d = diag_iter.next()
+                        error_parts.append(str(d.getMessage(None)))
+                    if not error_parts:
+                        error_parts.append(
+                            f"Snippet rejected: {str(event.snippet().source()).strip()}"
+                        )
+                ex = event.exception()
+                if ex is not None:
+                    all_ok = False
+                    error_parts.append(str(ex.getMessage()))
+
+            if not all_ok:
+                break
     finally:
         jpype.JClass("java.lang.System").setOut(old_out)
         jpype.JClass("java.lang.System").setErr(old_err)
@@ -1021,17 +1053,20 @@ def _register_scala_magic() -> None:
 
         if output and not args["silent"]:
             print(output)
-        if errors:
-            print(errors, file=sys.stderr)
-        if not success and not errors:
-            print("Scala execution failed (no error details captured)",
-                  file=sys.stderr)
-
-        if success and args["outputs"]:
-            _pull_outputs(args["outputs"])
 
         if args["show_time"]:
             print(f"\n[Scala cell executed in {elapsed:.2f}s]")
+
+        if not success:
+            msg = errors or "Scala execution failed (no error details captured)"
+            print(msg, file=sys.stderr)
+            raise MagicExecutionError(msg)
+
+        if errors:
+            print(errors, file=sys.stderr)
+
+        if args["outputs"]:
+            _pull_outputs(args["outputs"])
 
     @register_line_magic
     def scala(line):  # noqa: F811 — intentional re-use of name for %scala
@@ -1049,11 +1084,12 @@ def _register_scala_magic() -> None:
         success, output, errors = execute_scala(line)
         if output:
             print(output)
+        if not success:
+            msg = errors or "Scala execution failed (no error details captured)"
+            print(msg, file=sys.stderr)
+            raise MagicExecutionError(msg)
         if errors:
             print(errors, file=sys.stderr)
-        if not success and not errors:
-            print("Scala execution failed (no error details captured)",
-                  file=sys.stderr)
 
     _scala_state["magic_registered"] = True
 
@@ -1278,17 +1314,20 @@ def _register_java_magic() -> None:
 
         if output and not args["silent"]:
             print(output)
-        if errors:
-            print(errors, file=sys.stderr)
-        if not success and not errors:
-            print("Java execution failed (no error details captured)",
-                  file=sys.stderr)
-
-        if success and args["outputs"]:
-            _pull_outputs_java(args["outputs"])
 
         if args["show_time"]:
             print(f"\n[Java cell executed in {elapsed:.2f}s]")
+
+        if not success:
+            msg = errors or "Java execution failed (no error details captured)"
+            print(msg, file=sys.stderr)
+            raise MagicExecutionError(msg)
+
+        if errors:
+            print(errors, file=sys.stderr)
+
+        if args["outputs"]:
+            _pull_outputs_java(args["outputs"])
 
     @register_line_magic
     def java(line):  # noqa: F811
@@ -1305,11 +1344,12 @@ def _register_java_magic() -> None:
         success, output, errors = execute_java(line)
         if output:
             print(output)
+        if not success:
+            msg = errors or "Java execution failed (no error details captured)"
+            print(msg, file=sys.stderr)
+            raise MagicExecutionError(msg)
         if errors:
             print(errors, file=sys.stderr)
-        if not success and not errors:
-            print("Java execution failed (no error details captured)",
-                  file=sys.stderr)
 
     _java_state["magic_registered"] = True
 
