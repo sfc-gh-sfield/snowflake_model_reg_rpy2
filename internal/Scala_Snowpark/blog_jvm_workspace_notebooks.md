@@ -6,13 +6,13 @@ cross-language interoperability*
 
 ---
 
-> **Heads up:** The Scala & Java prototype described in this post is an
+> **Heads up:** The Scala & Java toolkit described in this post is an
 > experimental project. It is **not officially supported by Snowflake**.
 > It demonstrates what's possible today within the existing building blocks
 > available in Workspace Notebooks and is shared to demonstrate the principles
 > and as-is for those that may find it useful. APIs and behaviour may change. 
-> The full working prototype is available on
-> [GitHub](https://github.com/sfc-gh-sfield/snowflake-workspace-scala-prototype).
+> The full working toolkit is available on
+> [GitHub](https://github.com/Snowflake-Labs/snowflake-notebook-jvm).
 
 ---
 
@@ -31,7 +31,7 @@ and `%%java` cells in a Workspace Notebook, query Snowflake with
 testable code, use the Spark DataFrame API via `spark.sql(...)`, and pass
 DataFrames seamlessly between Python, Scala, and Java.
 
-The full working prototype -- including the installer, helper module, and
+The full working toolkit -- including the installer, helper module, and
 example notebooks -- is published as a self-contained repo that you can clone
 into any Workspace.
 
@@ -88,7 +88,7 @@ The key components:
 
 ## Getting Started
 
-The prototype consists of a handful of files. Upload them to your Workspace
+The toolkit consists of a handful of files. Upload them to your Workspace
 Notebook's working directory:
 
 ```
@@ -208,7 +208,7 @@ Credentials are injected as **Java System properties** (not environment
 variables) because Java's `System.getenv()` caches the process environment at
 JVM startup, making later `os.environ` changes invisible to Scala.
 
-> **Security note:** No new credentials are created here. The prototype uses
+> **Security note:** No new credentials are created here. The toolkit uses
 > the **same SPCS OAuth token** that the Workspace container already provides
 > to the Python Snowpark session at `/snowflake/session/token`. This token is
 > short-lived, auto-rotated by the container runtime, and scoped to the
@@ -432,7 +432,7 @@ sfSession.sql("SELECT double_it(42) AS result").show()
 Java UDF registration is trickier. JShell compiles classes to an **in-memory
 classloader** (unlike Scala's IMain which writes `.class` files to disk).
 This means Snowpark Java's `registerTemporary()` / `registerPermanent()`
-can't find the class files to serialize -- it reports *"Unable to detect the
+wouldn't find the class files to serialize -- e.g. *"Unable to detect the
 location of the enclosing class"*.
 
 We solve this with two custom magics that extract the handler class source
@@ -502,10 +502,10 @@ notebook output.
 ## Spark Connect for Scala (Opt-in)
 
 When `spark_connect.enabled: true` is set in `scala_packages.yaml`, the
-prototype also provides a native **Spark SQL** experience alongside Snowpark.
+toolkit also provides a native **Spark SQL** experience alongside Snowpark.
 This gives you the full Spark DataFrame API -- `filter`, `groupBy`, `agg`,
 `join`, `createDataFrame`, and everything else from the Spark ecosystem --
-executing against Snowflake data.
+executing against Snowflake data.  This requires some additional installation steps, so will take a little longer to complete, and hence is optional for install.
 
 ### How It Works
 
@@ -532,7 +532,7 @@ token. The Scala Spark Connect client in the JVM connects to
 
 **Both APIs share a single JVM.** This was one of the trickier challenges -- `snowpark_connect` normally starts its own JVM and refuses to
 run if one is already active. We solve this by starting our JVM first (with
-the complete classpath including PySpark's bundled JARs) and monkey-patching
+the complete classpath including PySpark's bundled JARs) and modify
 `snowpark_connect`'s `start_jvm` function to reuse the existing one.
 
 ### Setup
@@ -747,7 +747,7 @@ execution. We raise `MagicExecutionError` (a Python exception) from
 
 ## What's in the Repo
 
-The [companion repository](https://github.com/sfc-gh-sfield/snowflake-workspace-scala-prototype)
+The [companion repository](https://github.com/Snowflake-Labs/snowflake-notebook-jvm)
 contains everything needed to get started:
 
 | File | Purpose |
@@ -792,7 +792,7 @@ Scala/Java-native Workspace Notebook experience could look like.
 ---
 
 **Resources:**
-- [GitHub: Scala & Java Workspace Prototype](https://github.com/sfc-gh-sfield/snowflake-workspace-scala-prototype)
+- [GitHub: Scala & Java for Workspace Notebooks](https://github.com/Snowflake-Labs/snowflake-notebook-jvm)
 - [Snowpark Scala Developer Guide](https://docs.snowflake.com/en/developer-guide/snowpark/scala/index)
 - [Snowpark Java Developer Guide](https://docs.snowflake.com/en/developer-guide/snowpark/java/index)
 - [Snowpark Connect for Scala](https://docs.snowflake.com/en/developer-guide/snowpark/scala/spark-connect)

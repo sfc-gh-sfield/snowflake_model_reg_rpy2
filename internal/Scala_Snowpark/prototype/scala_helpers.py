@@ -675,7 +675,7 @@ def _init_ammonite(metadata: Dict[str, Any]) -> None:
     # Ammonite's Main has various static factory methods and constructors.
     # We try to create a headless instance suitable for programmatic use.
     #
-    # For the prototype, we use a pragmatic approach:
+    # We use a pragmatic approach:
     # 1. Try to instantiate Ammonite's Main and call its run* methods
     # 2. If that fails, extract the underlying Scala IMain from Ammonite
     # 3. Last resort: fall back to plain IMain
