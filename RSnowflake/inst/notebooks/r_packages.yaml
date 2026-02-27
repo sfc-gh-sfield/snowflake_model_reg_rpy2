@@ -14,5 +14,8 @@ conda_packages:
   - r-jsonlite
   - r-rlang>=1.0.0
   - r-cli
+  - r-dbplyr>=2.3.0
+  - r-dplyr>=1.1.0
+  - r-nanoarrow
 
 cran_packages: []
