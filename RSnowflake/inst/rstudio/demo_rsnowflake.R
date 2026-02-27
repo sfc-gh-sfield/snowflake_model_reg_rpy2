@@ -2,6 +2,10 @@
 # RSnowflake -- Feature Demo (RStudio / Positron)
 # =============================================================================
 #
+# First-time setup (from the project root in RStudio):
+#   renv::restore()                # install all pinned dependencies
+#   renv::install("./RSnowflake")  # install package from local source
+#
 # An interactive walkthrough of RSnowflake's key features:
 #   1. DBI connection via connections.toml
 #   2. Querying (dbGetQuery, dbSendQuery/dbFetch)

@@ -74,11 +74,11 @@ test_that("sf_auth_resolve uses explicit token with PAT token_type", {
   })
 })
 
-test_that("SNOWFLAKE_PAT takes priority over explicit token", {
+test_that("explicit token takes priority over SNOWFLAKE_PAT", {
   withr::with_envvar(c(SNOWFLAKE_TOKEN = "", SNOWFLAKE_PAT = "envpat"), {
     result <- sf_auth_resolve(account = "test", user = "user", token = "explicit")
-    expect_equal(result$type, "pat")
-    expect_equal(result$token, "envpat")
+    expect_equal(result$type, "token")
+    expect_equal(result$token, "explicit")
   })
 })
 

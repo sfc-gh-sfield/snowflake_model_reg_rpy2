@@ -6,9 +6,12 @@
 # It validates DBI operations, type roundtrips, quoting, Connections Pane
 # readiness, and the Arrow fast path.
 #
+# First-time setup (from the project root in RStudio):
+#   renv::restore()                # install all pinned dependencies
+#   renv::install("./RSnowflake")  # install package from local source
+#
 # Prerequisites:
-#   1. Install the package:  devtools::install("RSnowflake")
-#      or:  install.packages("RSnowflake", repos = NULL, type = "source")
+#   1. Open the top-level project folder in RStudio (renv activates automatically)
 #   2. Ensure a connections.toml profile is configured
 #      (default: ~/.snowflake/connections.toml  [rsnowflake_dev])
 #   3. Key-pair JWT auth configured (no MFA needed)
