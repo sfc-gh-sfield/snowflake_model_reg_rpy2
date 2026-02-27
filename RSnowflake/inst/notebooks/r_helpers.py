@@ -1,6 +1,13 @@
 """
 R Environment Helpers for Snowflake Workspace Notebooks
 
+SYNC NOTE: This file is shared between RSnowflake and snowflakeR.
+  Canonical copies live at:
+    - RSnowflake/inst/notebooks/r_helpers.py
+    - snowflakeR/inst/notebooks/r_helpers.py
+  When editing either copy, port the changes to the other and verify
+  nothing breaks in the other package's notebooks.
+
 This module provides helper functions for:
 - R environment setup and configuration
 - PAT (Programmatic Access Token) management
@@ -15,10 +22,10 @@ Usage:
     from r_helpers import init_r_output_helpers  # Load rprint, rview, rglimpse
     from r_helpers import KeyPairAuth, OAuthAuth  # Alternative auth methods
     from r_helpers import init_r_alt_auth  # Load R test functions
-    
+
 After setup, use in R cells:
     rprint(x)      - Print any object cleanly
-    rview(df, n)   - View data frame (optional row limit)  
+    rview(df, n)   - View data frame (optional row limit)
     rglimpse(df)   - Glimpse data frame structure
 """
 
