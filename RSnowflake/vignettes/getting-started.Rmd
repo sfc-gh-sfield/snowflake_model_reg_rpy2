@@ -115,18 +115,22 @@ dbAppendTable(con, "iris_copy", iris[1:10, ])
 dbRemoveTable(con, "iris_copy")
 ```
 
-## Arrow Fast Path
+## Arrow Interface
 
-For large result sets, use the Arrow interface for significantly better
-performance. This requires the `nanoarrow` package.
+RSnowflake supports the DBI Arrow methods for compatibility with packages
+and workflows that expect them. This requires the `nanoarrow` package.
 
 ```{r arrow}
-# Returns a nanoarrow array stream (zero-copy where possible)
-stream <- dbGetQueryArrow(con, "SELECT * FROM large_table")
-
-# Convert to data.frame
+stream <- dbGetQueryArrow(con, "SELECT * FROM my_table")
 df <- as.data.frame(stream)
 ```
+
+**Note:** The Snowflake SQL API v2 only returns JSON, so these Arrow methods
+fetch data through the normal JSON path and convert to nanoarrow on the
+client side. This provides interface compatibility but no performance
+advantage over `dbGetQuery()`. For large result sets, `dbGetQuery()` is
+the most direct path. Native server-side Arrow transport is planned for
+a future release.
 
 ## dbplyr Integration
 

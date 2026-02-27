@@ -182,6 +182,16 @@ setMethod("dbExecute", signature("SnowflakeConnection", "character"),
 
 # ---------------------------------------------------------------------------
 # DBI Arrow methods
+#
+# NOTE: These methods exist for interface compatibility with packages and
+# workflows that expect DBI Arrow methods.  Because the Snowflake SQL API v2
+# only returns JSON, data is fetched through the normal JSON path and then
+# converted to a nanoarrow array stream on the client side.  This adds a
+# small overhead versus dbGetQuery/dbFetch and provides no performance
+# benefit.  For large result sets, prefer dbGetQuery() or dbFetch().
+#
+# Native Arrow transport (server-side Arrow IPC) would require the internal
+# Snowflake GS protocol and is planned as a future opt-in enhancement.
 # ---------------------------------------------------------------------------
 
 #' @rdname SnowflakeConnection-class

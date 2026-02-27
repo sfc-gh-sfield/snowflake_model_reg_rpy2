@@ -7,6 +7,12 @@
 # the client side.  This gives users the standard DBI Arrow interface while
 # working within the constraints of SQL API v2.
 #
+# PERFORMANCE NOTE: This client-side conversion adds overhead compared to
+# the standard dbGetQuery/dbFetch path and offers no performance benefit.
+# It exists purely for DBI interface compatibility.  Native Arrow transport
+# (server-side Arrow IPC via the internal Snowflake GS protocol) is planned
+# as a future opt-in enhancement -- see architecture.md section 11.
+#
 # All nanoarrow calls are guarded with rlang::check_installed() since
 # nanoarrow is in Suggests.
 
