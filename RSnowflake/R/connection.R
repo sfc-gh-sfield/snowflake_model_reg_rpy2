@@ -579,11 +579,14 @@ setMethod("dbDataType", "SnowflakeConnection", function(dbObj, obj, ...) {
 .extract_rows_affected <- function(resp) {
   stats <- resp$stats
   if (!is.null(stats)) {
-    ra <- stats$numRowsInserted %||%
-          stats$numRowsUpdated %||%
-          stats$numRowsDeleted %||%
-          stats$numRowsUnloaded
-    if (!is.null(ra)) return(as.integer(ra))
+    counts <- c(
+      stats$numRowsInserted,
+      stats$numRowsUpdated,
+      stats$numRowsDeleted,
+      stats$numRowsUnloaded
+    )
+    counts <- counts[!is.na(counts)]
+    if (length(counts) > 0L) return(as.integer(sum(counts)))
   }
   0L
 }
