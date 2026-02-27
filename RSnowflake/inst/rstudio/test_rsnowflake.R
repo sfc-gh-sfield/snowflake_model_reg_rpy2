@@ -105,14 +105,14 @@ check("dbListTables includes table",
 
 fields <- dbListFields(con, "RSNOWFLAKE_LOCAL_TEST")
 check("dbListFields returns 4 columns", length(fields) == 4)
-check("dbListFields preserves case",
-      identical(fields, c("id", "name", "score", "active")))
+check("dbListFields returns uppercase (ODBC-compat default)",
+      identical(fields, c("ID", "NAME", "SCORE", "ACTIVE")))
 cat("  Fields:", paste(fields, collapse = ", "), "\n")
 
 df_read <- dbReadTable(con, "RSNOWFLAKE_LOCAL_TEST")
 check("dbReadTable returns 5 rows", nrow(df_read) == 5)
-check("integer roundtrip", is.integer(df_read$id))
-check("string roundtrip", df_read$name[1] == "Alice")
+check("integer roundtrip", is.integer(df_read$ID))
+check("string roundtrip", df_read$NAME[1] == "Alice")
 
 extra <- data.frame(id = 6L, name = "Frank", score = 91.0, active = TRUE)
 dbWriteTable(con, "RSNOWFLAKE_LOCAL_TEST", extra, append = TRUE)
@@ -124,7 +124,7 @@ check("append adds rows", nrow(df_after) == 6)
 # ---------------------------------------------------------------------------
 cat("\n== 4. Streaming Results ==\n")
 
-sql <- 'SELECT * FROM RSNOWFLAKE_LOCAL_TEST ORDER BY "id"'
+sql <- 'SELECT * FROM RSNOWFLAKE_LOCAL_TEST ORDER BY "ID"'
 res <- dbSendQuery(con, sql)
 check("dbSendQuery returns SnowflakeResult", is(res, "SnowflakeResult"))
 check("result is valid", dbIsValid(res))
@@ -177,7 +177,7 @@ check("table = mytable", ids[[1]]@name[["table"]] == "mytable")
 # ---------------------------------------------------------------------------
 cat("\n== 7. DML ==\n")
 
-affected <- dbExecute(con, 'DELETE FROM RSNOWFLAKE_LOCAL_TEST WHERE "id" = 6')
+affected <- dbExecute(con, 'DELETE FROM RSNOWFLAKE_LOCAL_TEST WHERE "ID" = 6')
 check("dbExecute DELETE returns affected", affected >= 1)
 
 df <- dbGetQuery(con, "SELECT COUNT(*) AS cnt FROM RSNOWFLAKE_LOCAL_TEST")
@@ -190,13 +190,13 @@ cat("\n== 8. Transactions ==\n")
 
 tryCatch({
   dbBegin(con)
-  dbExecute(con, "INSERT INTO \"RSNOWFLAKE_LOCAL_TEST\" (\"id\", \"name\", \"score\", \"active\") VALUES (7, 'Grace', 99.0, TRUE)")
+  dbExecute(con, "INSERT INTO \"RSNOWFLAKE_LOCAL_TEST\" (\"ID\", \"NAME\", \"SCORE\", \"ACTIVE\") VALUES (7, 'Grace', 99.0, TRUE)")
   dbCommit(con)
   df <- dbGetQuery(con, "SELECT COUNT(*) AS cnt FROM RSNOWFLAKE_LOCAL_TEST")
   check("transaction commit", df$CNT == 6)
 
   dbBegin(con)
-  dbExecute(con, "INSERT INTO \"RSNOWFLAKE_LOCAL_TEST\" (\"id\", \"name\", \"score\", \"active\") VALUES (8, 'Heidi', 77.0, FALSE)")
+  dbExecute(con, "INSERT INTO \"RSNOWFLAKE_LOCAL_TEST\" (\"ID\", \"NAME\", \"SCORE\", \"ACTIVE\") VALUES (8, 'Heidi', 77.0, FALSE)")
   dbRollback(con)
   df <- dbGetQuery(con, "SELECT COUNT(*) AS cnt FROM RSNOWFLAKE_LOCAL_TEST")
   check("transaction rollback", df$CNT == 6)
@@ -209,12 +209,12 @@ tryCatch({
 # ---------------------------------------------------------------------------
 cat("\n== 9. Parameterized Queries ==\n")
 
-res <- dbSendQuery(con, "SELECT * FROM RSNOWFLAKE_LOCAL_TEST WHERE \"id\" = ?")
+res <- dbSendQuery(con, "SELECT * FROM RSNOWFLAKE_LOCAL_TEST WHERE \"ID\" = ?")
 dbBind(res, list(1L))
 df <- dbFetch(res)
 dbClearResult(res)
 check("parameterized query returns 1 row", nrow(df) == 1)
-check("parameterized query correct value", df$name == "Alice")
+check("parameterized query correct value", df$NAME == "Alice")
 
 # ---------------------------------------------------------------------------
 # 10. dbListObjects (Connections Pane readiness)

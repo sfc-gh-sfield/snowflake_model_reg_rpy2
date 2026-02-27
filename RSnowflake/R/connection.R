@@ -254,7 +254,7 @@ setMethod("dbListTables", "SnowflakeConnection", function(conn, ...) {
 setMethod("dbExistsTable", signature("SnowflakeConnection", "character"),
   function(conn, name, ...) {
     .check_valid(conn)
-    tolower(name) %in% tolower(dbListTables(conn))
+    tolower(.maybe_upcase(name)) %in% tolower(dbListTables(conn))
   }
 )
 
@@ -263,7 +263,7 @@ setMethod("dbExistsTable", signature("SnowflakeConnection", "character"),
 setMethod("dbListFields", signature("SnowflakeConnection", "character"),
   function(conn, name, ...) {
     .check_valid(conn)
-    id <- dbQuoteIdentifier(conn, name)
+    id <- dbQuoteIdentifier(conn, .maybe_upcase(name))
     resp <- sf_api_submit(conn, paste0("SHOW COLUMNS IN TABLE ", id))
     parsed <- sf_parse_response(resp)
     if (nrow(parsed$data) == 0L) return(character(0))
@@ -361,7 +361,7 @@ setMethod("dbListObjects", signature("SnowflakeConnection"),
 setMethod("dbReadTable", signature("SnowflakeConnection", "character"),
   function(conn, name, ...) {
     .check_valid(conn)
-    id <- dbQuoteIdentifier(conn, name)
+    id <- dbQuoteIdentifier(conn, .maybe_upcase(name))
     dbGetQuery(conn, paste0("SELECT * FROM ", id))
   }
 )
@@ -377,7 +377,8 @@ setMethod("dbWriteTable",
   function(conn, name, value, overwrite = FALSE, append = FALSE,
            row.names = FALSE, ...) {
     .check_valid(conn)
-
+    name <- .maybe_upcase(name)
+    names(value) <- .maybe_upcase(names(value))
     id <- dbQuoteIdentifier(conn, name)
     exists <- dbExistsTable(conn, name)
 
@@ -410,13 +411,13 @@ setMethod("dbCreateTable",
   signature("SnowflakeConnection", "character"),
   function(conn, name, fields, ..., row.names = NULL, temporary = FALSE) {
     .check_valid(conn)
-    id <- dbQuoteIdentifier(conn, name)
+    id <- dbQuoteIdentifier(conn, .maybe_upcase(name))
 
     if (is.data.frame(fields)) {
       col_types <- vapply(fields, r_to_sf_type, character(1))
-      col_names <- names(fields)
+      col_names <- .maybe_upcase(names(fields))
     } else if (is.character(fields)) {
-      col_names <- names(fields)
+      col_names <- .maybe_upcase(names(fields))
       col_types <- unname(fields)
     } else {
       cli_abort("{.arg fields} must be a data.frame or a named character vector.")
@@ -437,6 +438,8 @@ setMethod("dbAppendTable",
   signature("SnowflakeConnection", "character"),
   function(conn, name, value, ..., row.names = NULL) {
     .check_valid(conn)
+    name <- .maybe_upcase(name)
+    names(value) <- .maybe_upcase(names(value))
     id <- dbQuoteIdentifier(conn, name)
     if (nrow(value) == 0L) return(invisible(0L))
     .insert_data(conn, id, value)
@@ -449,7 +452,7 @@ setMethod("dbAppendTable",
 setMethod("dbRemoveTable", signature("SnowflakeConnection", "character"),
   function(conn, name, ...) {
     .check_valid(conn)
-    id <- dbQuoteIdentifier(conn, name)
+    id <- dbQuoteIdentifier(conn, .maybe_upcase(name))
     dbExecute(conn, paste0("DROP TABLE IF EXISTS ", id))
     invisible(TRUE)
   }

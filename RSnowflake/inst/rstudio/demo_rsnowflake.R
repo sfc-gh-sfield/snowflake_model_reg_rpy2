@@ -50,7 +50,8 @@ dbGetQuery(con, "
 # ── 3. Table Operations ────────────────────────────────────────────────────
 
 # Create a demo data.frame with lowercase column names.
-# RSnowflake preserves the case you give it (unlike ODBC which uppercases).
+# By default, RSnowflake uppercases identifiers (ODBC-compatible behavior).
+# Set options(RSnowflake.identifier_case = "preserve") to keep original case.
 demo <- data.frame(
   id     = 1:10,
   city   = c("London", "Paris", "Tokyo", "Sydney", "NYC",
@@ -64,8 +65,8 @@ demo <- data.frame(
 
 dbWriteTable(con, "DEMO_CITIES", demo, overwrite = TRUE)
 
-# Verify column names preserved their original case
-dbListFields(con, "DEMO_CITIES")
+# Column names are uppercased by default (ODBC-compatible)
+dbListFields(con, "DEMO_CITIES")  # -> c("ID", "CITY", "TEMP_C", "RAINY")
 
 # Read it back
 dbReadTable(con, "DEMO_CITIES")
@@ -84,14 +85,15 @@ dbGetQuery(con, "SELECT COUNT(*) AS n FROM DEMO_CITIES")
 
 # ── 4. Identifier Case Handling ─────────────────────────────────────────────
 
-# Snowflake uppercases unquoted identifiers. RSnowflake always quotes them,
-# so the case you specify in R is the case stored in Snowflake.
+# By default, RSnowflake uppercases identifiers to match ODBC behavior.
+# In raw SQL, reference columns in uppercase (quoted or unquoted):
+dbGetQuery(con, 'SELECT "CITY", "TEMP_C" FROM DEMO_CITIES WHERE "TEMP_C" > 25')
 
-# To reference columns in raw SQL, use quoted identifiers:
-dbGetQuery(con, 'SELECT "city", "temp_c" FROM DEMO_CITIES WHERE "temp_c" > 25')
+# Unquoted also works since Snowflake uppercases unquoted identifiers:
+dbGetQuery(con, "SELECT CITY, TEMP_C FROM DEMO_CITIES WHERE TEMP_C > 25")
 
-# dbQuoteIdentifier wraps names in double-quotes:
-dbQuoteIdentifier(con, "myColumn")
+# dbQuoteIdentifier wraps names in double-quotes (does NOT change case):
+dbQuoteIdentifier(con, "myColumn")  # -> "myColumn"
 
 # dbUnquoteIdentifier parses back:
 dbUnquoteIdentifier(con, SQL('"mydb"."myschema"."mytable"'))
@@ -102,12 +104,12 @@ dbUnquoteIdentifier(con, SQL('"mydb"."myschema"."mytable"'))
 # Use ? placeholders with the params argument:
 dbGetQuery(
   con,
-  'SELECT * FROM DEMO_CITIES WHERE "temp_c" > ?',
+  'SELECT * FROM DEMO_CITIES WHERE "TEMP_C" > ?',
   params = list(30)
 )
 
 # Or via dbBind:
-res <- dbSendQuery(con, 'SELECT * FROM DEMO_CITIES WHERE "city" = ?')
+res <- dbSendQuery(con, 'SELECT * FROM DEMO_CITIES WHERE "CITY" = ?')
 dbBind(res, list("Tokyo"))
 dbFetch(res)
 dbClearResult(res)
@@ -119,13 +121,13 @@ dbClearResult(res)
 # SQL API v2). This section will work once transactions are implemented.
 tryCatch({
   dbBegin(con)
-  dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"id\",\"city\",\"temp_c\",\"rainy\") VALUES (13, 'Lima', 22.0, FALSE)")
+  dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"ID\",\"CITY\",\"TEMP_C\",\"RAINY\") VALUES (13, 'Lima', 22.0, FALSE)")
   dbRollback(con)
 
   dbGetQuery(con, "SELECT COUNT(*) AS n FROM DEMO_CITIES")
 
   dbWithTransaction(con, {
-    dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"id\",\"city\",\"temp_c\",\"rainy\") VALUES (14, 'Oslo', 5.0, TRUE)")
+    dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"ID\",\"CITY\",\"TEMP_C\",\"RAINY\") VALUES (14, 'Oslo', 5.0, TRUE)")
     stop("Simulated error -- transaction will roll back")
   })
 }, error = function(e) {

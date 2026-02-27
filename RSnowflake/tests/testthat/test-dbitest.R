@@ -10,6 +10,10 @@ skip_if_not_installed("DBItest")
 
 library(DBItest)
 
+old_case <- getOption("RSnowflake.identifier_case")
+options(RSnowflake.identifier_case = "preserve")
+withr::defer(options(RSnowflake.identifier_case = old_case))
+
 # Snowflake-specific tweaks
 sf_tweaks <- tweaks(
   constructor_name = "Snowflake",

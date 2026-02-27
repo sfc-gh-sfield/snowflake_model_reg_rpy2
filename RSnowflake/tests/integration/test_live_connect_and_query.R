@@ -96,12 +96,12 @@ check("dbListTables includes TEST_TYPES", "TEST_TYPES" %in% tables)
 
 fields <- dbListFields(con_test, "TEST_TYPES")
 check("dbListFields returns column names",
-      all(c("id", "name", "score", "active") %in% fields))
+      all(c("ID", "NAME", "SCORE", "ACTIVE") %in% fields))
 
 df_back <- dbReadTable(con_test, "TEST_TYPES")
 check("dbReadTable returns 5 rows", nrow(df_back) == 5L)
-check("dbReadTable integer roundtrip", identical(sort(df_back$id), 1:5))
-check("dbReadTable string roundtrip", "Alice" %in% df_back$name)
+check("dbReadTable integer roundtrip", identical(sort(df_back$ID), 1:5))
+check("dbReadTable string roundtrip", "Alice" %in% df_back$NAME)
 
 check("dbWriteTable append", {
   extra <- data.frame(id = 6L, name = "Frank", score = 91.0, active = TRUE,
@@ -115,7 +115,7 @@ check("dbWriteTable append", {
 cat("\n== 5. dbSendQuery / dbFetch / dbClearResult ==\n")
 # ==========================================================================
 
-res <- dbSendQuery(con_test, 'SELECT * FROM TEST_TYPES ORDER BY "id"')
+res <- dbSendQuery(con_test, 'SELECT * FROM TEST_TYPES ORDER BY "ID"')
 check("dbSendQuery returns SnowflakeResult", is(res, "SnowflakeResult"))
 check("Result is valid", dbIsValid(res))
 
@@ -136,7 +136,7 @@ check("Result cleared", !dbIsValid(res))
 cat("\n== 6. dbExecute (DML) ==\n")
 # ==========================================================================
 
-n <- dbExecute(con_test, 'DELETE FROM TEST_TYPES WHERE "id" = 6')
+n <- dbExecute(con_test, 'DELETE FROM TEST_TYPES WHERE "ID" = 6')
 check("dbExecute DELETE returns affected", n >= 0L)
 
 remaining <- dbGetQuery(con_test, "SELECT COUNT(*) AS cnt FROM TEST_TYPES")

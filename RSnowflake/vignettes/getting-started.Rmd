@@ -115,6 +115,34 @@ dbAppendTable(con, "iris_copy", iris[1:10, ])
 dbRemoveTable(con, "iris_copy")
 ```
 
+## Identifier Case Handling
+
+By default, RSnowflake uppercases table and column names in DDL/DML
+operations (`dbWriteTable`, `dbCreateTable`, `dbReadTable`, etc.).
+This matches the behavior of Snowflake's ODBC driver and of Snowflake
+itself when identifiers are unquoted:
+
+```{r case-upper}
+dbWriteTable(con, "my_table", data.frame(id = 1, name = "Alice"))
+dbListFields(con, "my_table")
+#> [1] "ID" "NAME"
+```
+
+To preserve the original case of identifiers (useful for DBItest
+compliance or when you need lowercase column names), set:
+
+```{r case-preserve}
+options(RSnowflake.identifier_case = "preserve")
+
+dbWriteTable(con, "my_table", data.frame(id = 1, name = "Alice"), overwrite = TRUE)
+dbListFields(con, "my_table")
+#> [1] "id" "name"
+```
+
+**Note:** `dbQuoteIdentifier()` is not affected by this option -- it
+always faithfully quotes the string you give it. The option only
+controls the implicit casing applied in table-level operations.
+
 ## Arrow Interface
 
 RSnowflake supports the DBI Arrow methods for compatibility with packages
