@@ -77,6 +77,9 @@ setMethod("dbFetch", signature("SnowflakeResult"),
     if (!st$valid) {
       cli_abort("Result has been cleared.")
     }
+    if (isTRUE(st$pending)) {
+      cli_abort("Query has bind placeholders. Call {.fn dbBind} first.")
+    }
 
     meta <- .get_meta(res)
     resp_body <- .get_resp_body(res)
@@ -137,6 +140,7 @@ setMethod("dbFetch", signature("SnowflakeResult"),
 setMethod("dbHasCompleted", "SnowflakeResult", function(res, ...) {
   st <- res@.state
   if (!st$valid) return(TRUE)
+  if (isTRUE(st$pending)) return(FALSE)
   meta <- .get_meta(res)
   total_partitions <- max(meta$num_partitions, 1L)
   st$fetched && st$current_partition >= total_partitions
@@ -246,6 +250,7 @@ setMethod("dbBind", "SnowflakeResult",
     resp <- sf_api_submit(res@connection, res@statement, bindings = bindings)
     meta <- sf_parse_metadata(resp)
 
+    st$pending <- FALSE
     st$fetched <- FALSE
     st$current_partition <- 0L
     st$rows_fetched <- 0L

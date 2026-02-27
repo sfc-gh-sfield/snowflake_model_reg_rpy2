@@ -93,6 +93,21 @@ setMethod("dbGetInfo", "SnowflakeConnection", function(dbObj, ...) {
 setMethod("dbSendQuery", signature("SnowflakeConnection", "character"),
   function(conn, statement, params = NULL, ...) {
     .check_valid(conn)
+
+    # Defer execution when the SQL has ? placeholders but no params yet
+    # (the caller will supply them via dbBind)
+    if (is.null(params) && grepl("\\?", statement)) {
+      state <- .new_result_state(rows_affected = -1L)
+      state$pending <- TRUE
+      return(new("SnowflakeResult",
+        connection = conn,
+        statement  = statement,
+        .resp_body = list(),
+        .meta      = list(),
+        .state     = state
+      ))
+    }
+
     bindings <- if (!is.null(params)) .params_to_bindings(params) else NULL
     resp <- sf_api_submit(conn, statement, bindings = bindings)
     meta <- sf_parse_metadata(resp)
