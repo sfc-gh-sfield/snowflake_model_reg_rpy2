@@ -69,6 +69,10 @@ renv/sandbox/
 .cursor/
 *.code-workspace
 
+# RStudio / Positron
+*.Rproj
+.Rproj.user/
+
 # PyCharm
 .idea/
 
