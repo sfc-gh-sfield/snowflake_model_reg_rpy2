@@ -2,7 +2,7 @@
 
 export(Snowflake)
 export(sf_connect)
-export(sqlData)
+exportMethods(sqlData)
 exportClasses(SnowflakeConnection)
 exportClasses(SnowflakeDriver)
 exportClasses(SnowflakeResult)

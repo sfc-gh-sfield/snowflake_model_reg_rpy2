@@ -673,27 +673,23 @@ setMethod("dbDataType", "SnowflakeConnection", function(dbObj, obj, ...) {
   paste0("'", gsub("'", "''", as.character(x)), "'")
 }
 
-#' Convert a data.frame to SQL-ready strings
-#'
-#' @param con A [SnowflakeConnection-class] object.
-#' @param value A data.frame.
-#' @param row.names Ignored.
-#' @param ... Additional arguments (ignored).
-#' @returns A data.frame of character columns.
+#' @rdname SnowflakeConnection-class
 #' @export
-sqlData <- function(con, value, row.names = FALSE, ...) {
-  as.data.frame(
-    lapply(value, function(col) {
-      if (is.logical(col)) {
-        ifelse(col, "TRUE", "FALSE")
-      } else if (inherits(col, "Date")) {
-        format(col, "%Y-%m-%d")
-      } else if (inherits(col, "POSIXct")) {
-        format(col, "%Y-%m-%d %H:%M:%OS3", tz = "UTC")
-      } else {
-        as.character(col)
-      }
-    }),
-    stringsAsFactors = FALSE
-  )
-}
+setMethod("sqlData", "SnowflakeConnection",
+  function(con, value, row.names = FALSE, ...) {
+    as.data.frame(
+      lapply(value, function(col) {
+        if (is.logical(col)) {
+          ifelse(col, "TRUE", "FALSE")
+        } else if (inherits(col, "Date")) {
+          format(col, "%Y-%m-%d")
+        } else if (inherits(col, "POSIXct")) {
+          format(col, "%Y-%m-%d %H:%M:%OS3", tz = "UTC")
+        } else {
+          as.character(col)
+        }
+      }),
+      stringsAsFactors = FALSE
+    )
+  }
+)

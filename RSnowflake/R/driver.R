@@ -80,7 +80,12 @@ setMethod("dbConnect", "SnowflakeDriver",
 
     # Workspace Notebook auto-detection (env var, token file, or host)
     if (is.null(token) && is.null(account) && .is_workspace()) {
-      account <- .resolve_workspace_account()
+      account   <- .resolve_workspace_account()
+      database  <- if (nzchar(database))  database  else Sys.getenv("SNOWFLAKE_DATABASE", "")
+      schema    <- if (nzchar(schema))    schema    else Sys.getenv("SNOWFLAKE_SCHEMA", "")
+      warehouse <- if (nzchar(warehouse)) warehouse else Sys.getenv("SNOWFLAKE_WAREHOUSE", "")
+      role      <- if (nzchar(role))      role      else Sys.getenv("SNOWFLAKE_ROLE", "")
+      user      <- user %||% Sys.getenv("SNOWFLAKE_USER", "")
     }
 
     # Resolve parameters from connections.toml if not given explicitly
