@@ -1,0 +1,26 @@
+# Ignore conda environments (huge, contain no R dependencies)
+.conda/
+.conda
+
+# Ignore git internals
+.git/
+
+# Ignore Python virtual environments
+.venv/
+venv/
+
+# Ignore node_modules if any
+node_modules/
+
+# Ignore the internal planning docs (no R code)
+internal/
+
+# Ignore snowflakeR's Python/notebook artifacts
+snowflakeR/inst/python/
+snowflakeR/inst/notebooks/
+
+# Ignore RSnowflake's notebook artifacts (Python helper scripts)
+RSnowflake/inst/notebooks/
+
+# Ignore Scala/JVM prototypes
+internal/Scala_Snowpark/
