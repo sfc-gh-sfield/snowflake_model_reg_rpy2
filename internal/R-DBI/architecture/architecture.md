@@ -254,13 +254,13 @@ dbGetQuery(con, "SELECT * FROM t WHERE id > 100")
     │   │   Headers:
     │   │     Authorization: Bearer <token>
     │   │     Content-Type: application/json
-    │   │     Accept: application/json  (or application/vnd.apache.arrow.stream)
+    │   │     Accept: application/json
     │   │   Body:
     │   │     {"statement": "SELECT ...", "warehouse": "...", ...}
     │   │
     │   └── Response:
     │       ├── resultSetMetaData (column names, types, row count, partitions)
-    │       └── data (first partition, JSON or Arrow IPC)
+    │       └── data (first partition, JSON arrays of strings)
     │
     ├── Parse column metadata -> R types
     │
@@ -355,17 +355,26 @@ The JSON path:
 4. Handles `null` -> `NA` conversion per R type
 5. Assembles columns into a `data.frame`
 
-### 6.2 Arrow Path (Optional, High Performance)
+### 6.2 Arrow Path (Client-Side Conversion via nanoarrow)
 
-When `nanoarrow` is available and the user opts in (or for large results):
+When `nanoarrow` is available, DBI Arrow methods (`dbGetQueryArrow`,
+`dbFetchArrow`, `dbFetchArrowChunk`) are supported. These fetch data
+through the normal JSON path and convert the resulting R data.frame to
+a `nanoarrow_array_stream` on the client side:
 
-1. Request Arrow IPC format via the `Accept` header or result format parameter
-2. Receive binary Arrow IPC stream
-3. Use `nanoarrow::read_nanoarrow()` to parse the stream
-4. Convert Arrow arrays to R vectors (near zero-copy for primitive types)
+1. Submit query via `POST /api/v2/statements` (standard JSON format)
+2. Fetch JSON partitions (same as section 6.1)
+3. Parse JSON to R data.frame
+4. Convert data.frame to nanoarrow stream via `nanoarrow::as_nanoarrow_array_stream()`
 
-The Arrow path is ~3-5x faster for large numeric datasets and preserves
-type fidelity without string parsing.
+This provides the standard DBI Arrow interface expected by downstream
+packages while working within the constraints of the SQL API v2.
+
+**Why not native Arrow transport?** The Snowflake SQL API v2 (public REST
+API) only supports JSON responses. The `Accept` header must be
+`application/json` or `*/*` -- Arrow media types are rejected with
+HTTP 400. See section 11 for details on how native Arrow transport
+could be achieved via the internal Snowflake protocol in the future.
 
 ### 6.3 Snowflake-to-R Type Mapping
 
@@ -542,7 +551,6 @@ dbConnect(RSnowflake::Snowflake(),
 
   # Options
   timeout       = 60,                  # Query timeout (seconds)
-  result_format = "json",              # "json" or "arrow"
   timezone      = "UTC",               # Session timezone
 
   # Profile-based (reads connections.toml)
@@ -554,9 +562,133 @@ dbConnect(RSnowflake::Snowflake(),
 
 ```r
 options(
-  RSnowflake.result_format = "json",   # Default result format
   RSnowflake.timeout       = 60,       # Default query timeout
   RSnowflake.retry_max     = 3,        # Max retry attempts
   RSnowflake.verbose       = FALSE     # Debug logging
 )
 ```
+
+---
+
+## 11. Native Arrow Transport -- Findings & Future Work
+
+### 11.1 Background
+
+The Snowflake Python connector achieves 3-10x faster result fetching for
+large datasets by using native Apache Arrow IPC transport. We investigated
+whether the same approach is available via the SQL API v2 used by
+RSnowflake.
+
+### 11.2 How the Python Connector Does It
+
+The Python connector does **not** use the public SQL API v2
+(`/api/v2/statements`). It uses Snowflake's internal GS (Global Services)
+protocol, which provides a fundamentally different result delivery
+mechanism:
+
+1. **Initial response** -- The query metadata response includes a
+   `rowsetBase64` field containing the first partition's data as
+   base64-encoded Arrow IPC bytes (instead of a `data` JSON array).
+   The Python connector decodes this via `base64.b64decode()`.
+
+2. **Subsequent partitions** -- The response includes a `chunks` array
+   where each chunk has a `url` field containing a **pre-signed cloud
+   storage URL** (S3, Azure Blob, or GCS). The connector downloads raw
+   Arrow IPC bytes directly from cloud storage, bypassing the Snowflake
+   API entirely. Encryption headers (`chunkHeaders`, `qrmk`) are
+   provided for SSE-C decryption.
+
+3. **Parsing** -- The raw Arrow IPC bytes (from base64 or direct
+   download) are fed into nanoarrow (as of Python connector 3.5.0+)
+   or pyarrow for zero-copy conversion to Python/Pandas types.
+
+Key fields in the internal protocol response that are NOT available in
+the SQL API v2:
+
+| Field | Purpose |
+|-------|---------|
+| `rowsetBase64` | Base64-encoded Arrow IPC for inline first partition |
+| `chunks[].url` | Pre-signed cloud storage URLs for partition downloads |
+| `chunkHeaders` | HTTP headers for SSE-C encrypted chunk downloads |
+| `qrmk` | Query Result Master Key for chunk decryption |
+
+Reference: `snowflake-connector-python/src/snowflake/connector/result_batch.py`
+(classes `ArrowResultBatch` and `JSONResultBatch`).
+
+### 11.3 What the SQL API v2 Actually Supports
+
+The public SQL API v2 (`/api/v2/statements`) only supports JSON:
+
+- The `Accept` header **must** be `application/json` or `*/*`. Any other
+  media type (including `application/vnd.apache.arrow.stream`) is rejected
+  with HTTP 400 error code 391926.
+- The `resultSetMetaData.format` field in the request body accepts
+  `"jsonv2"` but does not change the transport format.
+- All partition data is returned as JSON arrays of string values via the
+  `data` field.
+- Additional partitions are fetched via
+  `GET /api/v2/statements/{handle}?partition=N`, which returns
+  gzip-compressed JSON.
+
+### 11.4 Current RSnowflake Approach
+
+Given the SQL API v2 constraints, RSnowflake provides DBI Arrow methods
+by fetching JSON data through the normal path and converting to nanoarrow
+on the client side:
+
+```
+dbGetQueryArrow(con, sql)
+    │
+    ├── sf_api_submit(con, sql)           # POST, JSON format
+    ├── sf_parse_response(resp)           # JSON -> data.frame
+    └── nanoarrow::as_nanoarrow_array_stream(df)  # data.frame -> Arrow
+```
+
+This gives users the standard DBI Arrow interface (`dbGetQueryArrow`,
+`dbFetchArrow`, `dbSendQueryArrow`) for downstream compatibility, but
+does not provide the performance benefits of native Arrow transport.
+
+### 11.5 Future: Native Arrow via Internal Protocol
+
+**TODO**: Prototype a native Arrow transport path using the internal
+Snowflake GS protocol. This would be enabled via a hidden option
+(e.g. `options(RSnowflake.use_native_arrow = TRUE)`) and would:
+
+1. **Login via `/session/v1/login-request`** to obtain a session token
+   and master token (required for the internal protocol).
+
+2. **Submit queries** via the internal query endpoint (used by the Python
+   connector) with `resultSetMetaData.format = "arrow"` to receive
+   `rowsetBase64` and chunk URLs.
+
+3. **Decode first partition** from base64 Arrow IPC.
+
+4. **Download subsequent partitions** directly from pre-signed cloud
+   storage URLs as raw Arrow IPC bytes, with optional SSE-C decryption.
+
+5. **Parse Arrow IPC** via `nanoarrow::read_nanoarrow()` for zero-copy
+   conversion to R data.frames.
+
+Complexity and risks:
+
+- The internal protocol is undocumented and subject to change without
+  notice. The Python/JDBC/Go connectors track it closely but it is not
+  a public contract.
+- Session management (session tokens, master tokens, heartbeat/keepalive)
+  is required, adding significant implementation complexity.
+- SSE-C chunk decryption (`qrmk` + `chunkHeaders`) must be implemented
+  for encrypted result sets.
+- The login endpoint may require different auth flows than what we
+  currently support via SQL API v2.
+- Testing would need to cover both the SQL API v2 path (default) and
+  the native Arrow path (opt-in).
+
+Expected performance impact:
+
+- **Small results (<1,000 rows)**: Negligible difference. JSON parsing
+  overhead is minimal.
+- **Medium results (1K-100K rows)**: 2-3x improvement expected from
+  avoiding string serialization/deserialization.
+- **Large results (>100K rows)**: 5-10x improvement expected, matching
+  what the Python connector blog reports, primarily from direct cloud
+  storage downloads and binary Arrow transport.

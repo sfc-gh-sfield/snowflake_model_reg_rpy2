@@ -186,13 +186,16 @@ Snowflake SQL API v2
 Peak memory: ~1.2N bytes (JSON string + R vectors, then JSON is GC'd)
 ```
 
-**Proposed (Direct REST, Arrow path)**:
+**Proposed (Direct REST, Arrow path -- requires internal protocol)**:
 ```
-Snowflake SQL API v2 (Arrow IPC format)
-  --> httr2 HTTP response (binary, streamed to temp file)
+Snowflake Internal GS Protocol (Arrow IPC format)
+  --> rowsetBase64 (first partition, base64-decoded)
+  --> pre-signed cloud storage URLs (subsequent partitions)
   --> nanoarrow::read_nanoarrow() --> R vectors (near zero-copy)
 Peak memory: ~1.0N bytes (Arrow buffers mapped directly)
 ```
+*Note: This path requires the internal Snowflake protocol, not the public
+SQL API v2. See architecture document section 11 for implementation plan.*
 
 ### 3.3 Authentication Strategy
 
@@ -285,10 +288,15 @@ two strategies:
 2. Use the internal stage endpoints (requires additional REST calls)
 3. Fall back to the Python bridge for large uploads if needed
 
-**Result format**: The SQL API v2 returns results in JSON format by default.
-Arrow IPC format may require using the internal `/queries/v1/query-request`
-endpoint or negotiating format via headers. This needs further investigation
-and testing.
+**Result format**: The SQL API v2 returns results in JSON format **only**.
+Arrow IPC transport is not available via the public REST API -- the
+`Accept` header must be `application/json` or `*/*`. Native Arrow
+transport requires using Snowflake's internal GS protocol (as the Python
+connector does), which provides `rowsetBase64` inline data and pre-signed
+cloud storage URLs for chunk downloads. See the architecture document
+(section 11) for full analysis. RSnowflake currently provides DBI Arrow
+methods via client-side JSON-to-nanoarrow conversion. A future prototype
+using the internal protocol is planned as an opt-in hidden option.
 
 ### 5.3 Internal vs Public API
 
@@ -371,7 +379,7 @@ For existing `snowflakeR` users:
 | Risk | Severity | Likelihood | Mitigation |
 |------|----------|------------|------------|
 | SQL API v2 missing features | Medium | Medium | Use internal endpoints as fallback; engage Snowflake API team |
-| Arrow result format not available via v2 | Medium | Medium | JSON path works fine for MVP; investigate internal endpoints |
+| Arrow result format not available via v2 | **Confirmed** | Medium | JSON path works for all use cases; native Arrow requires internal GS protocol (see arch doc §11) |
 | Authentication edge cases (MFA, SAML) | Low | Medium | Start with PAT/JWT/session token; add complex auth incrementally |
 | Snowflake type mapping edge cases | Low | High | Comprehensive type-map module; test with all Snowflake types |
 | CRAN submission requirements | Low | Low | Pure R + CRAN deps; follow established patterns from bigrquery |
