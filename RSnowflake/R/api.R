@@ -115,7 +115,7 @@ sf_api_cancel <- function(con, handle) {
       TRUE
     }, error = function(e) FALSE)
   } else if (auth$type == "token") {
-    new_token <- Sys.getenv("SNOWFLAKE_TOKEN", "")
+    new_token <- .read_workspace_token()
     if (nzchar(new_token) && new_token != auth$token) {
       con@.auth$token <- new_token
       TRUE

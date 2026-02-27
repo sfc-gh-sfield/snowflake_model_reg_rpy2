@@ -78,9 +78,8 @@ setMethod("dbConnect", "SnowflakeDriver",
            database = "", schema = "", warehouse = "", role = "",
            name = NULL, ...) {
 
-    # Workspace Notebook auto-detection: SNOWFLAKE_TOKEN present
-    ws_token <- Sys.getenv("SNOWFLAKE_TOKEN", "")
-    if (is.null(token) && nzchar(ws_token) && is.null(account)) {
+    # Workspace Notebook auto-detection (env var, token file, or host)
+    if (is.null(token) && is.null(account) && .is_workspace()) {
       account <- .resolve_workspace_account()
     }
 

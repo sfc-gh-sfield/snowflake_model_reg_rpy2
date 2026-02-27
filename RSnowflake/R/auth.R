@@ -15,8 +15,8 @@
 sf_auth_resolve <- function(account, user = NULL, token = NULL,
                             private_key_path = NULL,
                             authenticator = NULL) {
-  # Priority 1: Workspace Notebook session token
-  ws_token <- Sys.getenv("SNOWFLAKE_TOKEN", "")
+  # Priority 1: Workspace Notebook session token (env var or token file)
+  ws_token <- .read_workspace_token()
   if (is.null(token) && nzchar(ws_token)) {
     return(list(
       type = "token",
@@ -79,8 +79,29 @@ sf_auth_resolve <- function(account, user = NULL, token = NULL,
 
 
 # ---------------------------------------------------------------------------
-# Workspace Notebook account detection
+# Workspace Notebook helpers
 # ---------------------------------------------------------------------------
+
+#' Read the session token from env var or /snowflake/session/token file
+#' @returns Token string (possibly empty).
+#' @noRd
+.read_workspace_token <- function() {
+  tok <- Sys.getenv("SNOWFLAKE_TOKEN", "")
+  if (nzchar(tok)) return(tok)
+
+  token_file <- "/snowflake/session/token"
+  if (file.exists(token_file)) {
+    tok <- trimws(paste(readLines(token_file, warn = FALSE), collapse = ""))
+  }
+  tok
+}
+
+#' Detect whether we are running inside a Snowflake Workspace Notebook
+#' @noRd
+.is_workspace <- function() {
+  nzchar(Sys.getenv("SNOWFLAKE_HOST", "")) ||
+    file.exists("/snowflake/session/token")
+}
 
 #' Resolve the Snowflake account identifier in a Workspace Notebook
 #' @noRd
