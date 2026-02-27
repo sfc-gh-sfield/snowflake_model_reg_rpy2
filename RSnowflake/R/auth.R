@@ -7,10 +7,12 @@
 #' `token_type` (the value for the X-Snowflake-Authorization-Token-Type header).
 #'
 #' Priority order:
-#' 1. Workspace Notebook session token (SNOWFLAKE_TOKEN env var or token file)
+#' 1. Explicit bearer token (the `token` parameter)
 #' 2. Programmatic Access Token (SNOWFLAKE_PAT env var)
-#' 3. Explicit bearer token (the `token` parameter)
-#' 4. Key-pair JWT (private_key_path + account + user)
+#' 3. Key-pair JWT (private_key_path + account + user)
+#' 4. Workspace session token (SNOWFLAKE_TOKEN env var or token file) --
+#'    last resort; SPCS tokens are rejected by the SQL API for non-blessed
+#'    clients (HTTP 401, code 395092).
 #'
 #' @param account Account identifier.
 #' @param user Username.
@@ -22,31 +24,21 @@
 sf_auth_resolve <- function(account, user = NULL, token = NULL,
                             private_key_path = NULL,
                             authenticator = NULL) {
-  # Priority 1: Workspace Notebook session token (env var or token file)
-  ws_token <- .read_workspace_token()
-  if (is.null(token) && nzchar(ws_token)) {
+  # Priority 1: Explicit bearer token
+  if (!is.null(token) && nzchar(token)) {
     return(list(
       type = "token",
-      token = ws_token,
-      token_type = "OAUTH"
+      token = token,
+      token_type = "PROGRAMMATIC_ACCESS_TOKEN"
     ))
   }
 
-  # Priority 2: Programmatic Access Token (PAT)
+  # Priority 2: Programmatic Access Token (PAT) -- preferred in Workspace
   pat <- Sys.getenv("SNOWFLAKE_PAT", "")
   if (nzchar(pat)) {
     return(list(
       type = "pat",
       token = pat,
-      token_type = "PROGRAMMATIC_ACCESS_TOKEN"
-    ))
-  }
-
-  # Priority 3: Explicit bearer token (generic -- could be PAT or other)
-  if (!is.null(token) && nzchar(token)) {
-    return(list(
-      type = "token",
-      token = token,
       token_type = "PROGRAMMATIC_ACCESS_TOKEN"
     ))
   }
@@ -78,11 +70,21 @@ sf_auth_resolve <- function(account, user = NULL, token = NULL,
     ))
   }
 
+  # Priority 4: Workspace session token (SPCS) -- may be rejected by SQL API
+  ws_token <- .read_workspace_token()
+  if (is.null(token) && nzchar(ws_token)) {
+    return(list(
+      type = "token",
+      token = ws_token,
+      token_type = "OAUTH"
+    ))
+  }
+
   cli_abort(c(
     "No Snowflake credentials found.",
-    "i" = "Set {.envvar SNOWFLAKE_PAT} for programmatic access token auth,",
-    " " = "provide {.arg token}, or configure key-pair auth in",
-    " " = "{.file connections.toml}."
+    "i" = "In Workspace Notebooks, create a PAT first (see setup cells).",
+    "i" = "Otherwise provide {.arg token}, set {.envvar SNOWFLAKE_PAT},",
+    " " = "or configure key-pair auth in {.file connections.toml}."
   ))
 }
 
