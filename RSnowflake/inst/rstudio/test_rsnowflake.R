@@ -263,3 +263,4 @@ cat(sprintf("============================\n"))
 if (tests_failed > 0) {
   warning(sprintf("%d test(s) failed!", tests_failed))
 }
+
