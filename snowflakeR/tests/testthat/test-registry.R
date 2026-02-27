@@ -215,15 +215,15 @@ test_that(".resolve_service_fqn falls back to conn fields when ctx is NULL", {
   ctx <- list(database_name = NULL, schema_name = NULL)
   mock_conn <- structure(
     list(
-      session = NULL, account = "test", database = "SIMON",
-      schema = "SCRATCH", warehouse = "WH", auth_method = "test",
+      session = NULL, account = "test", database = "TESTDB",
+      schema = "TESTSCHEMA", warehouse = "WH", auth_method = "test",
       environment = "test", created_at = Sys.time()
     ),
     class = c("sfr_connection", "list")
   )
 
   fqn <- .resolve_service_fqn(ctx, mock_conn, "mpg_service")
-  expect_equal(fqn, "SIMON.SCRATCH.MPG_SERVICE")
+  expect_equal(fqn, "TESTDB.TESTSCHEMA.MPG_SERVICE")
 })
 
 

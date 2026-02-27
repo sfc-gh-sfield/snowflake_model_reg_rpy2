@@ -3,7 +3,7 @@
 # snowflakeR Integration Test: Live Connection + Model Registry
 # =============================================================================
 # This script tests the full pipeline:
-#   1. Connect to Snowflake via key-pair auth (connections.toml)
+#   1. Connect to Snowflake via connections.toml / env vars
 #   2. Run a simple query
 #   3. Train a local R model
 #   4. Log it to the Model Registry
@@ -11,14 +11,28 @@
 #   6. Run local prediction
 #   7. Clean up (delete model)
 #
+# Prerequisites:
+#   - A Snowflake connections.toml profile, OR environment variables:
+#       SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PRIVATE_KEY_FILE,
+#       SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA, SNOWFLAKE_WAREHOUSE, SNOWFLAKE_ROLE
+#   - The r-snowflakeR conda environment (or RETICULATE_PYTHON set)
+#   - snowflake-ml-python installed in the Python environment
+#
 # Usage:
 #   Rscript tests/integration/test_live_connect_and_registry.R
+#
+# With env vars:
+#   SNOWFLAKE_ACCOUNT=myaccount SNOWFLAKE_USER=myuser ... \
+#     Rscript tests/integration/test_live_connect_and_registry.R
+#
+# With a connections.toml profile:
+#   SNOWFLAKE_CONNECTION_NAME=my_profile \
+#     Rscript tests/integration/test_live_connect_and_registry.R
 # =============================================================================
 
 cat("=== snowflakeR Integration Test ===\n\n")
 
 # -- Step 0: Configure reticulate to use the r-snowflakeR conda env ----------
-# Discover the conda env python path
 conda_env_name <- "r-snowflakeR"
 conda_env_path <- tryCatch(
   {
@@ -42,9 +56,7 @@ cat("Python:", reticulate::py_config()$python, "\n\n")
 
 # -- Step 1: Load the package ------------------------------------------------
 cat("--- Step 1: Load snowflakeR ---\n")
-pkg_path <- Sys.getenv("SNOWFLAKER_PKG_PATH",
-  "/Users/sfield/Documents/_SnowCAT_Projects/snowflake_model_reg_rpy2/snowflakeR"
-)
+pkg_path <- Sys.getenv("SNOWFLAKER_PKG_PATH", ".")
 devtools::load_all(pkg_path)
 cat("OK: Package loaded\n\n")
 
@@ -56,18 +68,41 @@ cat("\n")
 # -- Step 3: Connect to Snowflake -------------------------------------------
 cat("--- Step 3: Connect to Snowflake ---\n")
 
-# Read connections.toml to get the key path
-# (Our sfr_connect_bridge needs account, user, key, etc.)
-conn <- sfr_connect(
-  account = "ak32940",
-  user = "SIMON",
-  authenticator = "SNOWFLAKE_JWT",
-  private_key_file = "/Users/sfield/.snowflake/keys/simon_rsa_key.p8",
-  database = "SIMON",
-  schema = "SCRATCH",
-  warehouse = "SIMON_XS",
-  role = "SYSADMIN"
-)
+conn_name <- Sys.getenv("SNOWFLAKE_CONNECTION_NAME", "")
+if (nzchar(conn_name)) {
+  conn <- sfr_connect(connection_name = conn_name)
+} else {
+  account   <- Sys.getenv("SNOWFLAKE_ACCOUNT", "")
+  user      <- Sys.getenv("SNOWFLAKE_USER", "")
+  key_file  <- Sys.getenv("SNOWFLAKE_PRIVATE_KEY_FILE", "")
+  database  <- Sys.getenv("SNOWFLAKE_DATABASE", "")
+  schema    <- Sys.getenv("SNOWFLAKE_SCHEMA", "")
+  warehouse <- Sys.getenv("SNOWFLAKE_WAREHOUSE", "")
+  role      <- Sys.getenv("SNOWFLAKE_ROLE", "")
+
+  missing <- character(0)
+  if (!nzchar(account))  missing <- c(missing, "SNOWFLAKE_ACCOUNT")
+  if (!nzchar(user))     missing <- c(missing, "SNOWFLAKE_USER")
+  if (!nzchar(key_file)) missing <- c(missing, "SNOWFLAKE_PRIVATE_KEY_FILE")
+  if (length(missing) > 0) {
+    stop(
+      "Set either SNOWFLAKE_CONNECTION_NAME or the following env vars: ",
+      paste(missing, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  conn <- sfr_connect(
+    account          = account,
+    user             = user,
+    authenticator    = "SNOWFLAKE_JWT",
+    private_key_file = key_file,
+    database         = if (nzchar(database))  database  else NULL,
+    schema           = if (nzchar(schema))    schema    else NULL,
+    warehouse        = if (nzchar(warehouse)) warehouse else NULL,
+    role             = if (nzchar(role))      role      else NULL
+  )
+}
 cat("OK: Connected\n")
 print(conn)
 cat("\n")
@@ -120,7 +155,6 @@ cat("--- Step 8: Show models ---\n")
 models <- sfr_show_models(conn)
 cat("  Total models in registry:", nrow(models), "\n")
 cat("  Columns:", paste(head(names(models), 10), collapse = ", "), "...\n")
-# Find our model - column name may be 'name' or 'NAME' depending on lowercasing
 name_col <- if ("name" %in% names(models)) "name" else names(models)[1]
 matches <- grepl(model_name, models[[name_col]], ignore.case = TRUE)
 if (any(matches)) {

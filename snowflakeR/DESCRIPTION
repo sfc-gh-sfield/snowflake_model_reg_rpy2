@@ -1,8 +1,10 @@
 Package: snowflakeR
 Title: R Interface to the Snowflake ML Platform
 Version: 0.1.0
-Authors@R: person("Simon", "Field", email = "simon.field@snowflake.com", role = c("aut", "cre"))
-Author: Simon Field [aut, cre]
+Authors@R: c(
+    person("Simon", "Field", email = "simon.field@snowflake.com", role = c("aut", "cre")),
+    person("Snowflake Inc.", role = "cph"))
+Author: Simon Field [aut, cre], Snowflake Inc. [cph]
 Maintainer: Simon Field <simon.field@snowflake.com>
 Description: Provides native R functions for working with the Snowflake ML
     platform, including Model Registry (log, deploy, and serve R models),

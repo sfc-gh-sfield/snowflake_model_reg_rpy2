@@ -23,8 +23,8 @@ The returned object can be passed directly to \code{\link[=sfr_predict_rest]{sfr
 ep <- sfr_service_endpoint(conn, "mpg_service")
 ep
 # <sfr_endpoint>
-# url:     https://xyz-ak32940.snowflakecomputing.app
-# service: SIMON.SCRATCH.MPG_SERVICE
+# url:     https://xyz-myorg123.snowflakecomputing.app
+# service: MYDB.MYSCHEMA.MPG_SERVICE
 }
 
 }

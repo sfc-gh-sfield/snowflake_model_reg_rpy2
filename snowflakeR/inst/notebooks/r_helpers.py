@@ -274,6 +274,13 @@ def _build_safe_r_magics_class():
                 self._buffered_mode = False
                 self._output_buf.clear()
 
+    # rpy2's R() uses @magic_arguments()/@argument() decorators that attach
+    # a .parser attribute.  Our override loses that metadata, causing
+    # parse_argstring(self.R, line) to fail with
+    #   AttributeError: 'function' object has no attribute 'parser'
+    # Copy it from the parent so the argparse machinery works.
+    SafeRMagics.R.parser = RMagics.R.parser
+
     return SafeRMagics
 
 # R output helpers code - can be loaded independently of connection management

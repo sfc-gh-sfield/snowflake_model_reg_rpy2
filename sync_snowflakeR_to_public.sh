@@ -12,10 +12,16 @@
 #
 # What is excluded:
 #   - internal/            (dev notes, plans)
+#   - tests/integration/   (live-connection tests with local paths)
 #   - r_notebook/*.ipynb   (legacy pre-package notebooks)
 #   - *.Rcheck/            (check artefacts)
 #   - *.tar.gz             (build artefacts)
+#   - notebook_config.yaml (personal Snowflake config)
 #   - sync_snowflakeR_to_public.sh  (this script)
+#
+# Safety:
+#   A post-copy scan checks the staging directory for known personal
+#   identifiers and secrets patterns before committing.
 #
 # Usage:
 #   ./sync_snowflakeR_to_public.sh [--dry-run]
@@ -49,7 +55,7 @@ echo "Staging dir  : $STAGING_DIR"
 echo ""
 
 # --- Step 1: Copy R package to staging (becomes root of public repo) ---
-echo "1/5  Copying snowflakeR/ package files..."
+echo "1/6  Copying snowflakeR/ package files..."
 rsync -a --delete \
   --exclude='*.Rcheck' \
   --exclude='*.tar.gz' \
@@ -57,17 +63,18 @@ rsync -a --delete \
   --exclude='.RData' \
   --exclude='__pycache__' \
   --exclude='inst/notebooks/notebook_config.yaml' \
+  --exclude='tests/integration/' \
   "$PRIVATE_REPO_DIR/snowflakeR/" \
   "$STAGING_DIR/"
 
 # --- Step 2: Copy CI workflows ---
-echo "2/5  Copying .github/ workflows..."
+echo "2/6  Copying .github/ workflows..."
 rsync -a \
   "$PRIVATE_REPO_DIR/.github/" \
   "$STAGING_DIR/.github/"
 
 # --- Step 3: Copy LICENSE ---
-echo "3/5  Copying LICENSE..."
+echo "3/6  Copying LICENSE..."
 if [[ -f "$PRIVATE_REPO_DIR/LICENSE" ]]; then
   cp "$PRIVATE_REPO_DIR/LICENSE" "$STAGING_DIR/LICENSE"
 else
@@ -75,7 +82,7 @@ else
 fi
 
 # --- Step 4: Copy snowflakeR notebooks ---
-echo "4/5  Copying demo notebooks..."
+echo "4/6  Copying demo notebooks..."
 if [[ -d "$PRIVATE_REPO_DIR/r_notebook/snowflakeR" ]]; then
   mkdir -p "$STAGING_DIR/notebooks"
   rsync -a \
@@ -83,8 +90,42 @@ if [[ -d "$PRIVATE_REPO_DIR/r_notebook/snowflakeR" ]]; then
     "$STAGING_DIR/notebooks/"
 fi
 
-# --- Step 5: Commit and push to public repo ---
-echo "5/5  Committing and pushing to public repo..."
+# --- Step 5: Scan for leaked secrets / personal identifiers ---
+echo "5/6  Scanning staging directory for secrets and personal identifiers..."
+
+BLOCKED_PATTERNS=(
+  '/Users/sfield'
+  'simon_rsa_key'
+  'ak32940'
+  'SIMON_XS'
+  'sfc-gh-sfield'
+  'connection.json'
+)
+
+scan_failed=false
+for pattern in "${BLOCKED_PATTERNS[@]}"; do
+  # Search text files only (skip .git and binary files)
+  matches=$(grep -r --include='*.R' --include='*.Rd' --include='*.py' \
+    --include='*.Rmd' --include='*.md' --include='*.yml' --include='*.yaml' \
+    --include='*.sh' --include='*.txt' --include='*.json' \
+    -l "$pattern" "$STAGING_DIR" 2>/dev/null || true)
+  if [[ -n "$matches" ]]; then
+    echo "  BLOCKED: Pattern '$pattern' found in:"
+    echo "$matches" | sed 's/^/    /'
+    scan_failed=true
+  fi
+done
+
+if $scan_failed; then
+  echo ""
+  echo "ERROR: Blocked patterns found in staging directory."
+  echo "Fix the source files in the private repo and re-run."
+  exit 1
+fi
+echo "  OK: No blocked patterns found."
+
+# --- Step 6: Commit and push to public repo ---
+echo "6/6  Committing and pushing to public repo..."
 cd "$STAGING_DIR"
 
 # Initialise git if not already

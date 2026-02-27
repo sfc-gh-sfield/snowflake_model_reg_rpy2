@@ -19,5 +19,10 @@ Useful links:
 \author{
 \strong{Maintainer}: Simon Field \email{simon.field@snowflake.com}
 
+Other contributors:
+\itemize{
+  \item Snowflake Inc. [copyright holder]
+}
+
 }
 \keyword{internal}
