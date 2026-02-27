@@ -191,9 +191,9 @@ setMethod("dbGetQueryArrow", signature("SnowflakeConnection", "character"),
     rlang::check_installed("nanoarrow", reason = "for Arrow result format")
     .check_valid(conn)
     bindings <- if (!is.null(params)) .params_to_bindings(params) else NULL
-    resp <- sf_api_submit_arrow(conn, statement, bindings = bindings)
+    resp <- sf_api_submit(conn, statement, bindings = bindings)
     meta <- sf_parse_metadata(resp)
-    sf_fetch_all_arrow_stream(conn, meta)
+    sf_fetch_all_as_arrow_stream(conn, resp, meta)
   }
 )
 
@@ -204,7 +204,7 @@ setMethod("dbSendQueryArrow", signature("SnowflakeConnection", "character"),
     rlang::check_installed("nanoarrow", reason = "for Arrow result format")
     .check_valid(conn)
     bindings <- if (!is.null(params)) .params_to_bindings(params) else NULL
-    resp <- sf_api_submit_arrow(conn, statement, bindings = bindings)
+    resp <- sf_api_submit(conn, statement, bindings = bindings)
     meta <- sf_parse_metadata(resp)
 
     state <- .new_result_state(rows_affected = -1L)

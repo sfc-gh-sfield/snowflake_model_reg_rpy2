@@ -155,8 +155,7 @@ setMethod("dbFetchArrow", signature("SnowflakeResult"),
     if (!st$valid) cli_abort("Result has been cleared.")
 
     meta <- .get_meta(res)
-
-    stream <- sf_fetch_all_arrow_stream(res@connection, meta)
+    stream <- sf_fetch_all_as_arrow_stream(res@connection, res@.resp_body, meta)
 
     st$fetched <- TRUE
     st$current_partition <- max(meta$num_partitions, 1L)
@@ -181,10 +180,9 @@ setMethod("dbFetchArrowChunk", signature("SnowflakeResult"),
     }
 
     part_idx <- if (st$fetched) st$current_partition else 0L
-    raw_bytes <- sf_api_fetch_partition_arrow(
-      res@connection, meta$statement_handle, part_idx
+    stream <- sf_fetch_partition_as_arrow_stream(
+      res@connection, res@.resp_body, meta, part_idx
     )
-    stream <- .arrow_raw_to_stream(raw_bytes)
 
     st$fetched <- TRUE
     st$current_partition <- part_idx + 1L

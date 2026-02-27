@@ -115,21 +115,22 @@ dbClearResult(res)
 
 # ── 6. Transactions ────────────────────────────────────────────────────────
 
-# Manual transaction control:
-dbBegin(con)
-dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"id\",\"city\",\"temp_c\",\"rainy\") VALUES (13, 'Lima', 22.0, FALSE)")
-dbRollback(con)   # undo the insert
+# Transaction support requires session-based state (not yet available via
+# SQL API v2). This section will work once transactions are implemented.
+tryCatch({
+  dbBegin(con)
+  dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"id\",\"city\",\"temp_c\",\"rainy\") VALUES (13, 'Lima', 22.0, FALSE)")
+  dbRollback(con)
 
-dbGetQuery(con, "SELECT COUNT(*) AS n FROM DEMO_CITIES")
+  dbGetQuery(con, "SELECT COUNT(*) AS n FROM DEMO_CITIES")
 
-# Automatic transaction (rolls back on error):
-tryCatch(
   dbWithTransaction(con, {
     dbExecute(con, "INSERT INTO \"DEMO_CITIES\" (\"id\",\"city\",\"temp_c\",\"rainy\") VALUES (14, 'Oslo', 5.0, TRUE)")
     stop("Simulated error -- transaction will roll back")
-  }),
-  error = function(e) message("Caught: ", conditionMessage(e))
-)
+  })
+}, error = function(e) {
+  message("Transactions not yet supported: ", conditionMessage(e))
+})
 
 dbGetQuery(con, "SELECT COUNT(*) AS n FROM DEMO_CITIES")
 

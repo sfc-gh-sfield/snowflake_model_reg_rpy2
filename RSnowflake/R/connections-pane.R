@@ -32,15 +32,15 @@
           )
         )
       },
-      listObjects = function(catalog = NULL, schema = NULL, ...) {
-        .pane_list_objects(conn, catalog, schema)
+      listObjects = function(database = NULL, schema = NULL, ...) {
+        .pane_list_objects(conn, database, schema)
       },
-      listColumns = function(catalog = NULL, schema = NULL, table = NULL, ...) {
-        .pane_list_columns(conn, catalog, schema, table)
+      listColumns = function(database = NULL, schema = NULL, table = NULL, ...) {
+        .pane_list_columns(conn, database, schema, table)
       },
-      previewObject = function(rowLimit, catalog = NULL, schema = NULL,
+      previewObject = function(rowLimit, database = NULL, schema = NULL,
                                table = NULL, ...) {
-        .pane_preview(conn, catalog, schema, table, rowLimit)
+        .pane_preview(conn, database, schema, table, rowLimit)
       },
       connectionObject = conn
     )
@@ -80,8 +80,8 @@
 
 #' List objects for the Connections Pane hierarchy
 #' @noRd
-.pane_list_objects <- function(conn, catalog, schema) {
-  if (is.null(catalog)) {
+.pane_list_objects <- function(conn, database, schema) {
+  if (is.null(database)) {
     resp <- sf_api_submit(conn, "SHOW DATABASES")
     parsed <- sf_parse_response(resp)
     if (nrow(parsed$data) == 0L) return(data.frame(name = character(0), type = character(0)))
@@ -89,14 +89,14 @@
     return(data.frame(name = parsed$data[[name_col]], type = "database"))
   }
   if (is.null(schema)) {
-    qdb <- dbQuoteIdentifier(conn, catalog)
+    qdb <- dbQuoteIdentifier(conn, database)
     resp <- sf_api_submit(conn, paste0("SHOW SCHEMAS IN DATABASE ", qdb))
     parsed <- sf_parse_response(resp)
     if (nrow(parsed$data) == 0L) return(data.frame(name = character(0), type = character(0)))
     name_col <- which(tolower(parsed$meta$columns$name) == "name")
     return(data.frame(name = parsed$data[[name_col]], type = "schema"))
   }
-  qdb <- dbQuoteIdentifier(conn, catalog)
+  qdb <- dbQuoteIdentifier(conn, database)
   qsch <- dbQuoteIdentifier(conn, schema)
   resp <- sf_api_submit(conn, paste0("SHOW TABLES IN SCHEMA ", qdb, ".", qsch))
   parsed <- sf_parse_response(resp)
@@ -107,9 +107,9 @@
 
 #' List columns for the Connections Pane column preview
 #' @noRd
-.pane_list_columns <- function(conn, catalog, schema, table) {
+.pane_list_columns <- function(conn, database, schema, table) {
   fqn <- paste0(
-    dbQuoteIdentifier(conn, catalog), ".",
+    dbQuoteIdentifier(conn, database), ".",
     dbQuoteIdentifier(conn, schema), ".",
     dbQuoteIdentifier(conn, table)
   )
@@ -131,9 +131,9 @@
 
 #' Preview table data for the Connections Pane
 #' @noRd
-.pane_preview <- function(conn, catalog, schema, table, rowLimit = 100L) {
+.pane_preview <- function(conn, database, schema, table, rowLimit = 100L) {
   fqn <- paste0(
-    dbQuoteIdentifier(conn, catalog), ".",
+    dbQuoteIdentifier(conn, database), ".",
     dbQuoteIdentifier(conn, schema), ".",
     dbQuoteIdentifier(conn, table)
   )
