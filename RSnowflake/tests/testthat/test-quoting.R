@@ -111,3 +111,35 @@ test_that("dbQuoteLiteral handles logicals", {
   result <- dbQuoteLiteral(con, FALSE)
   expect_equal(as.character(result), "FALSE")
 })
+
+test_that("dbUnquoteIdentifier parses single quoted identifier", {
+  con <- new("SnowflakeConnection",
+    account = "test", user = "user", database = "", schema = "",
+    warehouse = "", role = "", .auth = list(), .state = .new_conn_state()
+  )
+  result <- dbUnquoteIdentifier(con, SQL('"my_table"'))
+  expect_length(result, 1L)
+  expect_s4_class(result[[1L]], "Id")
+  expect_equal(result[[1L]]@name[["table"]], "my_table")
+})
+
+test_that("dbUnquoteIdentifier parses multi-part identifier", {
+  con <- new("SnowflakeConnection",
+    account = "test", user = "user", database = "", schema = "",
+    warehouse = "", role = "", .auth = list(), .state = .new_conn_state()
+  )
+  result <- dbUnquoteIdentifier(con, SQL('"mydb"."myschema"."mytable"'))
+  id <- result[[1L]]
+  expect_equal(id@name[["catalog"]], "mydb")
+  expect_equal(id@name[["schema"]], "myschema")
+  expect_equal(id@name[["table"]], "mytable")
+})
+
+test_that("dbUnquoteIdentifier handles escaped quotes", {
+  con <- new("SnowflakeConnection",
+    account = "test", user = "user", database = "", schema = "",
+    warehouse = "", role = "", .auth = list(), .state = .new_conn_state()
+  )
+  result <- dbUnquoteIdentifier(con, SQL('"has""quote"'))
+  expect_equal(result[[1L]]@name[["table"]], 'has"quote')
+})

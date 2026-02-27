@@ -1,6 +1,6 @@
 Package: RSnowflake
 Title: DBI Interface to 'Snowflake'
-Version: 0.1.0
+Version: 0.2.0
 Authors@R: c(
     person("Snowflake Inc.", role = c("aut", "cre", "cph"),
            email = "snowflake-r@snowflake.com"))
@@ -9,7 +9,7 @@ Description: A DBI-compliant interface to Snowflake (<https://www.snowflake.com>
     ODBC, JDBC, or Python. Supports key-pair JWT, programmatic access token (PAT),
     OAuth, and session token authentication. Optionally uses Apache Arrow for
     high-performance data transfer.
-License: Apache License 2.0
+License: Apache License (>= 2) | file LICENSE
 URL: https://github.com/Snowflake-Labs/RSnowflake
 BugReports: https://github.com/Snowflake-Labs/RSnowflake/issues
 Encoding: UTF-8
@@ -39,5 +39,8 @@ Suggests:
     DBItest (>= 1.7.0),
     testthat (>= 3.0.0),
     mockr,
-    withr
+    withr,
+    knitr,
+    rmarkdown
+VignetteBuilder: knitr
 Config/testthat/edition: 3

@@ -61,6 +61,24 @@ test_that("sf_auth_resolve uses SNOWFLAKE_PAT when available", {
     result <- sf_auth_resolve(account = "test", user = "user")
     expect_equal(result$type, "pat")
     expect_equal(result$token, "mypat")
+    expect_equal(result$token_type, "PROGRAMMATIC_ACCESS_TOKEN")
+  })
+})
+
+test_that("sf_auth_resolve uses explicit token with PAT token_type", {
+  withr::with_envvar(c(SNOWFLAKE_TOKEN = "", SNOWFLAKE_PAT = ""), {
+    result <- sf_auth_resolve(account = "test", user = "user", token = "mytoken")
+    expect_equal(result$type, "token")
+    expect_equal(result$token, "mytoken")
+    expect_equal(result$token_type, "PROGRAMMATIC_ACCESS_TOKEN")
+  })
+})
+
+test_that("SNOWFLAKE_PAT takes priority over explicit token", {
+  withr::with_envvar(c(SNOWFLAKE_TOKEN = "", SNOWFLAKE_PAT = "envpat"), {
+    result <- sf_auth_resolve(account = "test", user = "user", token = "explicit")
+    expect_equal(result$type, "pat")
+    expect_equal(result$token, "envpat")
   })
 })
 

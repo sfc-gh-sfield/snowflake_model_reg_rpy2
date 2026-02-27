@@ -3,11 +3,18 @@
 
 #' Resolve authentication for a Snowflake connection
 #'
-#' Determines the auth method and returns a list with `type` and `token`.
+#' Determines the auth method and returns a list with `type`, `token`, and
+#' `token_type` (the value for the X-Snowflake-Authorization-Token-Type header).
+#'
+#' Priority order:
+#' 1. Workspace Notebook session token (SNOWFLAKE_TOKEN env var or token file)
+#' 2. Programmatic Access Token (SNOWFLAKE_PAT env var)
+#' 3. Explicit bearer token (the `token` parameter)
+#' 4. Key-pair JWT (private_key_path + account + user)
 #'
 #' @param account Account identifier.
 #' @param user Username.
-#' @param token Explicit token (PAT or session token).
+#' @param token Explicit bearer token.
 #' @param private_key_path Path to PEM private key file.
 #' @param authenticator Auth method string.
 #' @returns A list with `type` ("jwt", "pat", "token") and `token` (the bearer string).
@@ -25,21 +32,22 @@ sf_auth_resolve <- function(account, user = NULL, token = NULL,
     ))
   }
 
-  # Priority 2: Explicit token / PAT
-  if (!is.null(token) && nzchar(token)) {
-    return(list(
-      type = "pat",
-      token = token,
-      token_type = "KEYPAIR_JWT"
-    ))
-  }
-
+  # Priority 2: Programmatic Access Token (PAT)
   pat <- Sys.getenv("SNOWFLAKE_PAT", "")
   if (nzchar(pat)) {
     return(list(
       type = "pat",
       token = pat,
-      token_type = "KEYPAIR_JWT"
+      token_type = "PROGRAMMATIC_ACCESS_TOKEN"
+    ))
+  }
+
+  # Priority 3: Explicit bearer token (generic -- could be PAT or other)
+  if (!is.null(token) && nzchar(token)) {
+    return(list(
+      type = "token",
+      token = token,
+      token_type = "PROGRAMMATIC_ACCESS_TOKEN"
     ))
   }
 
@@ -72,8 +80,9 @@ sf_auth_resolve <- function(account, user = NULL, token = NULL,
 
   cli_abort(c(
     "No Snowflake credentials found.",
-    "i" = "Provide {.arg token}, set {.envvar SNOWFLAKE_PAT}, or configure",
-    " " = "key-pair auth in {.file connections.toml}."
+    "i" = "Set {.envvar SNOWFLAKE_PAT} for programmatic access token auth,",
+    " " = "provide {.arg token}, or configure key-pair auth in",
+    " " = "{.file connections.toml}."
   ))
 }
 

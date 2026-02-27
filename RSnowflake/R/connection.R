@@ -63,6 +63,7 @@ setMethod("dbIsValid", "SnowflakeConnection", function(dbObj, ...) {
 #' @param conn A [SnowflakeConnection-class] object.
 #' @export
 setMethod("dbDisconnect", "SnowflakeConnection", function(conn, ...) {
+  .on_connection_closed(conn)
   conn@.state$valid <- FALSE
   invisible(TRUE)
 })
@@ -250,6 +251,87 @@ setMethod("dbListFields", signature("SnowflakeConnection", "character"),
 )
 
 #' @rdname SnowflakeConnection-class
+#' @param prefix An `Id` object indicating the hierarchy level to list
+#'   (NULL for databases, 1-component for schemas, 2-component for tables).
+#' @export
+setMethod("dbListObjects", signature("SnowflakeConnection"),
+  function(conn, prefix = NULL, ...) {
+    .check_valid(conn)
+
+    if (is.null(prefix)) {
+      return(.list_databases(conn))
+    }
+
+    parts <- prefix@name
+    if (length(parts) == 1L) {
+      return(.list_schemas(conn, parts[[1L]]))
+    }
+    if (length(parts) == 2L) {
+      return(.list_tables_in_schema(conn, parts[[1L]], parts[[2L]]))
+    }
+
+    data.frame(table = I(list()), is_prefix = logical(0))
+  }
+)
+
+.list_databases <- function(conn) {
+  resp <- sf_api_submit(conn, "SHOW DATABASES")
+  parsed <- sf_parse_response(resp)
+  if (nrow(parsed$data) == 0L) {
+    return(data.frame(table = I(list()), is_prefix = logical(0)))
+  }
+  name_col <- which(tolower(parsed$meta$columns$name) == "name")
+  if (length(name_col) == 0L) {
+    return(data.frame(table = I(list()), is_prefix = logical(0)))
+  }
+  dbs <- parsed$data[[name_col]]
+  data.frame(
+    table = I(lapply(dbs, function(d) Id(catalog = d))),
+    is_prefix = rep(TRUE, length(dbs))
+  )
+}
+
+.list_schemas <- function(conn, database) {
+  qdb <- dbQuoteIdentifier(conn, database)
+  resp <- sf_api_submit(conn, paste0("SHOW SCHEMAS IN DATABASE ", qdb))
+  parsed <- sf_parse_response(resp)
+  if (nrow(parsed$data) == 0L) {
+    return(data.frame(table = I(list()), is_prefix = logical(0)))
+  }
+  name_col <- which(tolower(parsed$meta$columns$name) == "name")
+  if (length(name_col) == 0L) {
+    return(data.frame(table = I(list()), is_prefix = logical(0)))
+  }
+  schemas <- parsed$data[[name_col]]
+  data.frame(
+    table = I(lapply(schemas, function(s) Id(catalog = database, schema = s))),
+    is_prefix = rep(TRUE, length(schemas))
+  )
+}
+
+.list_tables_in_schema <- function(conn, database, schema) {
+  qdb <- dbQuoteIdentifier(conn, database)
+  qsch <- dbQuoteIdentifier(conn, schema)
+  sql <- paste0("SHOW TABLES IN SCHEMA ", qdb, ".", qsch)
+  resp <- sf_api_submit(conn, sql)
+  parsed <- sf_parse_response(resp)
+  if (nrow(parsed$data) == 0L) {
+    return(data.frame(table = I(list()), is_prefix = logical(0)))
+  }
+  name_col <- which(tolower(parsed$meta$columns$name) == "name")
+  if (length(name_col) == 0L) {
+    return(data.frame(table = I(list()), is_prefix = logical(0)))
+  }
+  tables <- parsed$data[[name_col]]
+  data.frame(
+    table = I(lapply(tables, function(t) {
+      Id(catalog = database, schema = schema, table = t)
+    })),
+    is_prefix = rep(FALSE, length(tables))
+  )
+}
+
+#' @rdname SnowflakeConnection-class
 #' @export
 setMethod("dbReadTable", signature("SnowflakeConnection", "character"),
   function(conn, name, ...) {
@@ -385,6 +467,50 @@ setMethod("dbQuoteString", signature("SnowflakeConnection", "SQL"),
 #' @export
 setMethod("dbQuoteIdentifier", signature("SnowflakeConnection", "SQL"),
   function(conn, x, ...) { x }
+)
+
+#' @rdname SnowflakeConnection-class
+#' @export
+setMethod("dbUnquoteIdentifier", signature("SnowflakeConnection", "SQL"),
+  function(conn, x, ...) {
+    lapply(x, function(id_str) {
+      id_str <- as.character(id_str)
+      parts <- character(0)
+      remaining <- id_str
+
+      while (nzchar(remaining)) {
+        remaining <- trimws(remaining)
+        if (startsWith(remaining, '"')) {
+          close_pos <- regexpr('"([^"]|"")*"', remaining)
+          if (close_pos == -1L) {
+            parts <- c(parts, remaining)
+            break
+          }
+          len <- attr(close_pos, "match.length")
+          quoted <- substr(remaining, 2L, len - 1L)
+          quoted <- gsub('""', '"', quoted)
+          parts <- c(parts, quoted)
+          remaining <- substr(remaining, len + 1L, nchar(remaining))
+          remaining <- sub("^\\.", "", remaining)
+        } else {
+          dot_pos <- regexpr("\\.", remaining)
+          if (dot_pos == -1L) {
+            parts <- c(parts, remaining)
+            break
+          }
+          parts <- c(parts, substr(remaining, 1L, dot_pos - 1L))
+          remaining <- substr(remaining, dot_pos + 1L, nchar(remaining))
+        }
+      }
+
+      switch(as.character(length(parts)),
+        "1" = Id(table = parts[1L]),
+        "2" = Id(schema = parts[1L], table = parts[2L]),
+        "3" = Id(catalog = parts[1L], schema = parts[2L], table = parts[3L]),
+        Id(table = id_str)
+      )
+    })
+  }
 )
 
 #' @rdname SnowflakeConnection-class

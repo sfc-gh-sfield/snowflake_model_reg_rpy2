@@ -139,6 +139,7 @@ setMethod("dbConnect", "SnowflakeDriver",
       ))
     })
 
+    .on_connection_opened(con)
     con
   }
 )

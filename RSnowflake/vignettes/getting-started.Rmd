@@ -1,0 +1,165 @@
+---
+title: "Getting Started with RSnowflake"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with RSnowflake}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  eval = FALSE
+)
+```
+
+RSnowflake is a DBI-compliant R interface to Snowflake that connects
+directly to the Snowflake SQL API via HTTPS. It has no dependency on ODBC,
+JDBC, or Python.
+
+## Installation
+
+```{r install}
+# From GitHub (development version):
+# install.packages("pak")
+pak::pak("Snowflake-Labs/RSnowflake")
+```
+
+## Authentication
+
+RSnowflake supports several authentication methods. The recommended
+approach is to configure a profile in `~/.snowflake/connections.toml`,
+the same file used by the Snowflake Python connector and Snowflake CLI.
+
+### connections.toml (recommended)
+
+```toml
+[default]
+account   = "myaccount"
+user      = "myuser"
+authenticator = "SNOWFLAKE_JWT"
+private_key_path = "/path/to/rsa_key.p8"
+database  = "MY_DB"
+schema    = "PUBLIC"
+warehouse = "MY_WH"
+```
+
+Then connect without any arguments:
+
+```{r connect-toml}
+library(DBI)
+library(RSnowflake)
+
+con <- dbConnect(Snowflake())
+```
+
+Or select a named profile:
+
+```{r connect-named}
+con <- dbConnect(Snowflake(), name = "my_profile")
+```
+
+### Programmatic Access Token (PAT)
+
+Set the `SNOWFLAKE_PAT` environment variable, or pass the token directly:
+
+```{r connect-pat}
+con <- dbConnect(
+  Snowflake(),
+  account = "myaccount",
+  token   = Sys.getenv("SNOWFLAKE_PAT")
+)
+```
+
+### Snowflake Workspace Notebooks
+
+Inside a Workspace Notebook, authentication is automatic -- the session
+token is read from the environment:
+```{r connect-workspace}
+con <- dbConnect(Snowflake())
+```
+
+## Running Queries
+
+```{r query}
+# Simple query
+df <- dbGetQuery(con, "SELECT * FROM my_table LIMIT 10")
+
+# Parameterized query
+df <- dbGetQuery(
+  con,
+  "SELECT * FROM users WHERE age > ?",
+  params = list(21L)
+)
+
+# Execute DDL / DML (returns rows affected)
+dbExecute(con, "CREATE TABLE test_tbl (id INT, name VARCHAR)")
+dbExecute(con, "INSERT INTO test_tbl VALUES (1, 'Alice')")
+```
+
+## Writing and Reading Tables
+
+```{r tables}
+# Write a data.frame to Snowflake
+dbWriteTable(con, "iris_copy", iris)
+
+# Read it back
+iris_back <- dbReadTable(con, "iris_copy")
+
+# Append more rows
+dbAppendTable(con, "iris_copy", iris[1:10, ])
+
+# Clean up
+dbRemoveTable(con, "iris_copy")
+```
+
+## Arrow Fast Path
+
+For large result sets, use the Arrow interface for significantly better
+performance. This requires the `nanoarrow` package.
+
+```{r arrow}
+# Returns a nanoarrow array stream (zero-copy where possible)
+stream <- dbGetQueryArrow(con, "SELECT * FROM large_table")
+
+# Convert to data.frame
+df <- as.data.frame(stream)
+```
+
+## dbplyr Integration
+
+RSnowflake integrates with dbplyr so you can use dplyr verbs that are
+translated to Snowflake SQL and executed lazily:
+
+```{r dbplyr}
+library(dplyr)
+
+tbl(con, "my_table") |>
+  filter(score > 90) |>
+  select(name, score) |>
+  arrange(desc(score)) |>
+  collect()
+```
+
+## Transactions
+
+```{r transactions}
+dbBegin(con)
+dbExecute(con, "INSERT INTO accounts VALUES (1, 100.00)")
+dbExecute(con, "INSERT INTO accounts VALUES (2, 200.00)")
+dbCommit(con)
+
+# Or use dbWithTransaction for automatic rollback on error:
+dbWithTransaction(con, {
+  dbExecute(con, "UPDATE accounts SET balance = balance - 50 WHERE id = 1")
+  dbExecute(con, "UPDATE accounts SET balance = balance + 50 WHERE id = 2")
+})
+```
+
+## Disconnecting
+
+```{r disconnect}
+dbDisconnect(con)
+```

@@ -16,6 +16,7 @@
 \alias{dbListTables,SnowflakeConnection-method}
 \alias{dbExistsTable,SnowflakeConnection,character-method}
 \alias{dbListFields,SnowflakeConnection,character-method}
+\alias{dbListObjects,SnowflakeConnection-method}
 \alias{dbReadTable,SnowflakeConnection,character-method}
 \alias{dbWriteTable,SnowflakeConnection,character,data.frame-method}
 \alias{dbCreateTable,SnowflakeConnection,character-method}
@@ -25,6 +26,7 @@
 \alias{dbQuoteString,SnowflakeConnection,character-method}
 \alias{dbQuoteString,SnowflakeConnection,SQL-method}
 \alias{dbQuoteIdentifier,SnowflakeConnection,SQL-method}
+\alias{dbUnquoteIdentifier,SnowflakeConnection,SQL-method}
 \alias{dbQuoteLiteral,SnowflakeConnection-method}
 \alias{dbDataType,SnowflakeConnection-method}
 \alias{dbBegin,SnowflakeConnection-method}
@@ -59,6 +61,8 @@
 
 \S4method{dbListFields}{SnowflakeConnection,character}(conn, name, ...)
 
+\S4method{dbListObjects}{SnowflakeConnection}(conn, prefix = NULL, ...)
+
 \S4method{dbReadTable}{SnowflakeConnection,character}(conn, name, ...)
 
 \S4method{dbWriteTable}{SnowflakeConnection,character,data.frame}(
@@ -84,6 +88,8 @@
 \S4method{dbQuoteString}{SnowflakeConnection,SQL}(conn, x, ...)
 
 \S4method{dbQuoteIdentifier}{SnowflakeConnection,SQL}(conn, x, ...)
+
+\S4method{dbUnquoteIdentifier}{SnowflakeConnection,SQL}(conn, x, ...)
 
 \S4method{dbQuoteLiteral}{SnowflakeConnection}(conn, x, ...)
 
@@ -111,6 +117,9 @@
 \item{params}{Optional parameter list for parameterized queries.}
 
 \item{name}{Table name (character).}
+
+\item{prefix}{An \code{Id} object indicating the hierarchy level to list
+(NULL for databases, 1-component for schemas, 2-component for tables).}
 
 \item{value}{A data.frame.}
 
