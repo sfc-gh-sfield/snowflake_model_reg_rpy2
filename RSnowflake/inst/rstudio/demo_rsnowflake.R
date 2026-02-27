@@ -148,10 +148,11 @@ if (requireNamespace("dbplyr", quietly = TRUE) &&
   cities_tbl
 
   # Lazy query -- translated to Snowflake SQL, not executed yet
+  # Column names are uppercase (ODBC-compat default)
   hot_cities <- cities_tbl |>
-    filter(temp_c > 20) |>
-    select(city, temp_c) |>
-    arrange(desc(temp_c))
+    filter(TEMP_C > 20) |>
+    select(CITY, TEMP_C) |>
+    arrange(desc(TEMP_C))
 
   # See the generated SQL
   show_query(hot_cities)
@@ -162,8 +163,8 @@ if (requireNamespace("dbplyr", quietly = TRUE) &&
   # Aggregation
   cities_tbl |>
     summarise(
-      avg_temp = mean(temp_c, na.rm = TRUE),
-      n_rainy  = sum(as.integer(rainy), na.rm = TRUE),
+      avg_temp = mean(TEMP_C, na.rm = TRUE),
+      n_rainy  = sum(as.integer(RAINY), na.rm = TRUE),
       n_cities = n()
     ) |>
     collect()
