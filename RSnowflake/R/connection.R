@@ -165,6 +165,46 @@ setMethod("dbExecute", signature("SnowflakeConnection", "character"),
 )
 
 # ---------------------------------------------------------------------------
+# DBI Arrow methods
+# ---------------------------------------------------------------------------
+
+#' @rdname SnowflakeConnection-class
+#' @export
+setMethod("dbGetQueryArrow", signature("SnowflakeConnection", "character"),
+  function(conn, statement, params = NULL, ...) {
+    rlang::check_installed("nanoarrow", reason = "for Arrow result format")
+    .check_valid(conn)
+    bindings <- if (!is.null(params)) .params_to_bindings(params) else NULL
+    resp <- sf_api_submit_arrow(conn, statement, bindings = bindings)
+    meta <- sf_parse_metadata(resp)
+    sf_fetch_all_arrow_stream(conn, meta)
+  }
+)
+
+#' @rdname SnowflakeConnection-class
+#' @export
+setMethod("dbSendQueryArrow", signature("SnowflakeConnection", "character"),
+  function(conn, statement, params = NULL, ...) {
+    rlang::check_installed("nanoarrow", reason = "for Arrow result format")
+    .check_valid(conn)
+    bindings <- if (!is.null(params)) .params_to_bindings(params) else NULL
+    resp <- sf_api_submit_arrow(conn, statement, bindings = bindings)
+    meta <- sf_parse_metadata(resp)
+
+    state <- .new_result_state(rows_affected = -1L)
+    state$use_arrow <- TRUE
+
+    new("SnowflakeResult",
+      connection = conn,
+      statement  = statement,
+      .resp_body = resp,
+      .meta      = meta,
+      .state     = state
+    )
+  }
+)
+
+# ---------------------------------------------------------------------------
 # Table operations
 # ---------------------------------------------------------------------------
 
@@ -450,11 +490,32 @@ setMethod("dbDataType", "SnowflakeConnection", function(dbObj, obj, ...) {
 }
 
 #' Insert data.frame rows via batched INSERT VALUES
+#'
+#' Uses named columns in the INSERT statement for robustness when column
+#' order may differ between the data.frame and the table.  Batch size is
+#' controlled by `getOption("RSnowflake.insert_batch_size")` (default 5000).
 #' @noRd
 .insert_data <- function(conn, table_id, df) {
-  batch_size <- 1000L
+  batch_size <- getOption("RSnowflake.insert_batch_size", 5000L)
+  batch_size <- as.integer(batch_size)
   n <- nrow(df)
   ncols <- ncol(df)
+
+  col_clause <- paste0(
+    " (",
+    paste(vapply(names(df), function(nm) {
+      dbQuoteIdentifier(conn, nm)
+    }, character(1)), collapse = ", "),
+    ")"
+  )
+
+  use_progress <- n > batch_size && requireNamespace("cli", quietly = TRUE)
+  if (use_progress) {
+    pb <- cli::cli_progress_bar(
+      total   = n,
+      format  = "Inserting rows {cli::pb_current}/{cli::pb_total} {cli::pb_bar} {cli::pb_percent}"
+    )
+  }
 
   for (start in seq(1L, n, by = batch_size)) {
     end <- min(start + batch_size - 1L, n)
@@ -465,10 +526,16 @@ setMethod("dbDataType", "SnowflakeConnection", function(dbObj, obj, ...) {
       paste0("(", paste(vals, collapse = ", "), ")")
     }, character(1))
 
-    sql <- paste0("INSERT INTO ", table_id, " VALUES\n",
-                   paste(rows, collapse = ",\n"))
+    sql <- paste0(
+      "INSERT INTO ", table_id, col_clause, " VALUES\n",
+      paste(rows, collapse = ",\n")
+    )
     sf_api_submit(conn, sql)
+
+    if (use_progress) cli::cli_progress_update(set = end, id = pb)
   }
+
+  if (use_progress) cli::cli_progress_done(id = pb)
 }
 
 .format_value <- function(x) {

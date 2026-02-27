@@ -38,5 +38,6 @@ Suggests:
     snowflakeauth,
     DBItest (>= 1.7.0),
     testthat (>= 3.0.0),
+    mockr,
     withr
 Config/testthat/edition: 3

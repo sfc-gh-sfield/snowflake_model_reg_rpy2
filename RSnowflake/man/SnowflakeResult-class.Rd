@@ -8,6 +8,8 @@
 \alias{dbClearResult,SnowflakeResult-method}
 \alias{dbFetch,SnowflakeResult-method}
 \alias{dbHasCompleted,SnowflakeResult-method}
+\alias{dbFetchArrow,SnowflakeResult-method}
+\alias{dbFetchArrowChunk,SnowflakeResult-method}
 \alias{dbGetRowCount,SnowflakeResult-method}
 \alias{dbGetRowsAffected,SnowflakeResult-method}
 \alias{dbGetStatement,SnowflakeResult-method}
@@ -25,6 +27,10 @@
 \S4method{dbFetch}{SnowflakeResult}(res, n = -1, ...)
 
 \S4method{dbHasCompleted}{SnowflakeResult}(res, ...)
+
+\S4method{dbFetchArrow}{SnowflakeResult}(res, ...)
+
+\S4method{dbFetchArrowChunk}{SnowflakeResult}(res, ...)
 
 \S4method{dbGetRowCount}{SnowflakeResult}(res, ...)
 

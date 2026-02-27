@@ -144,6 +144,52 @@ setMethod("dbHasCompleted", "SnowflakeResult", function(res, ...) {
 
 #' @rdname SnowflakeResult-class
 #' @export
+setMethod("dbFetchArrow", signature("SnowflakeResult"),
+  function(res, ...) {
+    rlang::check_installed("nanoarrow", reason = "for Arrow result format")
+    st <- res@.state
+    if (!st$valid) cli_abort("Result has been cleared.")
+
+    meta <- .get_meta(res)
+
+    stream <- sf_fetch_all_arrow_stream(res@connection, meta)
+
+    st$fetched <- TRUE
+    st$current_partition <- max(meta$num_partitions, 1L)
+    st$rows_fetched <- st$rows_fetched + meta$num_rows
+    stream
+  }
+)
+
+#' @rdname SnowflakeResult-class
+#' @export
+setMethod("dbFetchArrowChunk", signature("SnowflakeResult"),
+  function(res, ...) {
+    rlang::check_installed("nanoarrow", reason = "for Arrow result format")
+    st <- res@.state
+    if (!st$valid) cli_abort("Result has been cleared.")
+
+    meta <- .get_meta(res)
+    total_partitions <- max(meta$num_partitions, 1L)
+
+    if (st$fetched && st$current_partition >= total_partitions) {
+      return(nanoarrow::basic_array_stream(list()))
+    }
+
+    part_idx <- if (st$fetched) st$current_partition else 0L
+    raw_bytes <- sf_api_fetch_partition_arrow(
+      res@connection, meta$statement_handle, part_idx
+    )
+    stream <- .arrow_raw_to_stream(raw_bytes)
+
+    st$fetched <- TRUE
+    st$current_partition <- part_idx + 1L
+    stream
+  }
+)
+
+#' @rdname SnowflakeResult-class
+#' @export
 setMethod("dbGetRowCount", "SnowflakeResult", function(res, ...) {
   res@.state$rows_fetched
 })

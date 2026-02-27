@@ -11,6 +11,8 @@
 \alias{dbSendStatement,SnowflakeConnection,character-method}
 \alias{dbGetQuery,SnowflakeConnection,character-method}
 \alias{dbExecute,SnowflakeConnection,character-method}
+\alias{dbGetQueryArrow,SnowflakeConnection,character-method}
+\alias{dbSendQueryArrow,SnowflakeConnection,character-method}
 \alias{dbListTables,SnowflakeConnection-method}
 \alias{dbExistsTable,SnowflakeConnection,character-method}
 \alias{dbListFields,SnowflakeConnection,character-method}
@@ -46,6 +48,10 @@
 \S4method{dbGetQuery}{SnowflakeConnection,character}(conn, statement, params = NULL, ...)
 
 \S4method{dbExecute}{SnowflakeConnection,character}(conn, statement, params = NULL, ...)
+
+\S4method{dbGetQueryArrow}{SnowflakeConnection,character}(conn, statement, params = NULL, ...)
+
+\S4method{dbSendQueryArrow}{SnowflakeConnection,character}(conn, statement, params = NULL, ...)
 
 \S4method{dbListTables}{SnowflakeConnection}(conn, ...)
 
