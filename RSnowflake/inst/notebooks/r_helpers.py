@@ -178,14 +178,16 @@ def _build_safe_r_magics_class():
 
     1. **Error propagation** — R errors always raise
        ``RMagicExecutionError`` so Jupyter "Run All" stops on failure.
-    2. **Buffered output** — all R console output (``print()``,
-       ``cat()``, ``message()``) is captured via rpy2's console
-       callback and emitted as a single ``print()`` call at the end
-       of the cell.  This eliminates the extra line-breaks that
-       Workspace Notebooks inject between separate
-       ``publish_display_data`` calls.  With buffered output enabled,
-       R's normal ``print()``/``cat()`` work cleanly without needing
-       the ``rprint``/``rcat`` helper wrappers.
+    2. **Single-block output** — cell code is wrapped in R's
+       ``capture.output({...})`` so ALL output (including visible
+       return values like data.frames) is collected as a character
+       vector.  ``writeLines()`` then sends it through a single
+       ``write_console_regular`` call → our buffer → one ``print()``
+       at the end.  ``flush()`` returns empty to rpy2 so it has
+       nothing to publish via ``publish_display_data``.  This
+       eliminates the extra line-breaks that Workspace Notebooks
+       inject between separate display calls.  Same pattern as the
+       ``%%scala`` / ``%%java`` magics.
     3. **``--time``** — prints wall-clock execution time.
     4. **``--silent``** — suppresses all R text output.
     """
@@ -209,18 +211,16 @@ def _build_safe_r_magics_class():
                 super().write_console_regular(output)
 
         def flush(self):
-            """Return buffered output instead of Rstdout_cache.
-
-            During buffered mode, drains our buffer (so
-            ``RInterpreterError`` still gets context) and also
-            drains the parent cache (in case any output slipped
-            through to it directly).
+            """In buffered mode, return empty to rpy2 so it has nothing
+            to publish via ``publish_display_data``.  The real output
+            stays in ``_output_buf`` and is emitted as a single
+            ``print()`` at the end of our ``R()`` override.
             """
             if self._buffered_mode:
-                text = ''.join(self._output_buf)
-                self._output_buf.clear()
                 parent_text = super().flush()
-                return text + parent_text
+                if parent_text:
+                    self._output_buf.append(parent_text)
+                return ''
             return super().flush()
 
         @IPython.core.magic.needs_local_scope
@@ -239,6 +239,27 @@ def _build_safe_r_magics_class():
                     silent = True
                     parts.remove("--silent")
                 line = " ".join(parts)
+
+            # Wrap R code in capture.output so that visible return
+            # values (e.g. bare data.frame expressions) are captured
+            # through R's console output instead of rpy2's separate
+            # display path.  writeLines() sends the captured text
+            # through write_console_regular → _output_buf → single
+            # print() at the end.  Falls back to unwrapped execution
+            # for cells with -i/-o/-w/-h flags that need rpy2's
+            # variable transfer / plotting machinery.
+            has_io_flags = cell is not None and any(
+                f in line for f in ('-i ', '-o ', '-w ', '-h ',
+                                    '-i\t', '-o\t', '-w\t', '-h\t')
+            )
+            if cell is not None and not has_io_flags:
+                cell = (
+                    '..__co__ <- capture.output({\n'
+                    + cell
+                    + '\n})\n'
+                    'if (length(..__co__) > 0L) writeLines(..__co__)\n'
+                    'rm(..__co__)'
+                )
 
             self._output_buf.clear()
             self._buffered_mode = True
